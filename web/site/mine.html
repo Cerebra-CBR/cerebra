@@ -102,11 +102,16 @@ let workers=[], running=false, found=0, hashAccum=0, lastTs=0, curWork=null, pol
 const $=id=>document.getElementById(id);
 function log(msg,cls){ const el=$('log'); const d=document.createElement('div'); if(cls)d.className=cls; d.textContent='['+new Date().toLocaleTimeString()+'] '+msg; el.appendChild(d); el.scrollTop=el.scrollHeight; }
 
-// thread options
+// thread options. The ceiling is the CPU core count (more threads than cores
+// gives no speedup) - not RAM. A memory guard keeps each worker's ~64 MiB
+// dataset within the device's budget.
 (function(){
-  const cores = navigator.hardwareConcurrency || 2;
-  const max = Math.min(cores, 8);
-  const def = Math.max(1, Math.min(cores, /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)?2:4));
+  const cores = navigator.hardwareConcurrency || 4;
+  let max = Math.min(cores, 16);              // real limit = cores (16 = sanity cap)
+  const memGB = navigator.deviceMemory;       // spec-capped at 8
+  if (memGB) max = Math.min(max, Math.max(1, Math.floor(memGB * 1024 * 0.4 / 80)));
+  const mobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+  const def = Math.max(1, Math.min(max, mobile ? Math.ceil(cores/2) : cores));
   const sel=$('threads');
   for(let i=1;i<=max;i++){ const o=document.createElement('option'); o.value=i; o.textContent=i; if(i===def)o.selected=true; sel.appendChild(o); }
 })();
