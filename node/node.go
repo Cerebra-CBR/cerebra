@@ -465,10 +465,11 @@ func (n *Node) RPCHandler() http.Handler {
 			"mempool":    len(n.Chain.MempoolTxs()),
 			"peers":      len(n.peerList()),
 			"epoch":      epoch,
-			"reward":     core.BlockSubsidy(tip.Height + 1),
-			"hashrate":   hashrate,
-			"block_age":  blockAge,
-			"now":        now,
+			"reward":        core.BlockSubsidy(tip.Height + 1),
+			"hashrate":      hashrate,
+			"block_age":     blockAge,
+			"now":           now,
+			"fee_suggested": n.Chain.SuggestedFee(),
 		})
 	})
 

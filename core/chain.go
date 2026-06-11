@@ -723,6 +723,34 @@ func (c *Chain) Supply() uint64 {
 	return s
 }
 
+// SuggestedFee returns a cheap, self-adjusting fee (in synapses) based on how
+// full recent blocks are: an idle network gives a tiny floor, and as blocks
+// fill toward the cap the suggestion rises to ration space. This is a wallet
+// hint, not a consensus rule - the protocol still accepts any fee, even 0.
+func (c *Chain) SuggestedFee() uint64 {
+	const floor = 1000      // 0.00001 CRB while the network is idle
+	const fullMult = 1000.0 // completely full blocks -> ~floor*1000 (still cheap)
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	h := len(c.blocks)
+	n := 20
+	if h-1 < n {
+		n = h - 1
+	}
+	capacity := n * (MaxBlockTxs - 1)
+	if n <= 0 || capacity <= 0 {
+		return floor
+	}
+	var txs int
+	for i := h - n; i < h; i++ {
+		if t := len(c.blocks[i].Txs) - 1; t > 0 {
+			txs += t
+		}
+	}
+	fill := float64(txs) / float64(capacity) // 0..1
+	return uint64(float64(floor) * (1.0 + fullMult*fill*fill))
+}
+
 // HistoryItem is a wallet-facing view of a confirmed transaction.
 type HistoryItem struct {
 	TxID    string `json:"txid"`

@@ -512,7 +512,7 @@ func cmdSend(rest []string) error {
 	if err != nil {
 		return err
 	}
-	fee := uint64(10000) // 0.0001 CRB default
+	fee := suggestedFee() // cheap, self-adjusting default
 	if len(rest) >= 3 {
 		if fee, err = toAmount(rest[2]); err != nil {
 			return err
@@ -759,6 +759,17 @@ func netHeight() uint64 {
 	}
 	_ = apiGet("/status", &s)
 	return s.Height
+}
+
+// suggestedFee fetches the node's cheap, self-adjusting fee (in synapses).
+func suggestedFee() uint64 {
+	var s struct {
+		Fee uint64 `json:"fee_suggested"`
+	}
+	if apiGet("/status", &s) == nil && s.Fee > 0 {
+		return s.Fee
+	}
+	return 1000 // fallback floor (0.00001 CRB)
 }
 
 func cmdTx(rest []string) error {

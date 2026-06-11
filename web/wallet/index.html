@@ -97,7 +97,7 @@ th{color:var(--mut);font-weight:600}
     <input id="sendTo" data-ph="send_to_ph" placeholder="Recipient address (crb1...)">
     <div class="row">
       <div><input id="sendAmount" data-ph="amount_ph" placeholder="Amount CRB" type="number" step="0.00000001" min="0"></div>
-      <div><input id="sendFee" value="0.0001" type="number" step="0.0001" min="0" title="fee"></div>
+      <div><input id="sendFee" oninput="feeEdited=true" type="number" step="0.00000001" min="0" title="fee" placeholder="auto"></div>
     </div>
     <button id="sendBtn" onclick="sendTx()" data-i="sign_send">Sign and send</button>
     <div class="muted" style="margin-top:8px" data-i="fee_note">The fee goes to the block's miner. No minimum is set - but blocks fill by descending fee.</div>
@@ -121,6 +121,7 @@ th{color:var(--mut);font-weight:600}
 const API = location.pathname.replace(/wallet\/?.*/, '') + 'api';
 const UNIT = 1e8;
 let keys = null; // {secretKey: Uint8Array(64), publicKey: Uint8Array(32), address}
+let feeEdited = false; // becomes true once the user types a custom fee
 
 const $ = id => document.getElementById(id);
 const hex = b => Array.from(b).map(x=>x.toString(16).padStart(2,'0')).join('');
@@ -132,7 +133,7 @@ const L = {
     newkey_warn:"⚠️ Save your private key somewhere safe. It is the <b>only</b> way to recover your wallet. Lose the key - lose the coins.",
     saved_btn:"I saved the key - continue",balance:"Balance",your_addr:"Your address (click to copy):",show_key:"show private key",logout:"log out",
     send_crb:"Send CRB",send_to_ph:"Recipient address (crb1...)",amount_ph:"Amount CRB",sign_send:"Sign and send",
-    fee_note:"The fee goes to the block's miner. No minimum is set - but blocks fill by descending fee.",
+    fee_note:"The fee is filled in automatically and stays tiny - it floats with network load. You can override it.",
     history:"History",h_block:"Block",h_type:"Type",h_addr:"Address",h_amount:"Amount",loading:"loading…",network:"Network",connecting:"connecting…",
     e_keylen:"key must be 128 hex characters",err:"Error",copied:"Address copied",
     show_confirm:"Show the private key? Make sure nobody is looking at the screen.",your_key:"Your private key:",
@@ -146,7 +147,7 @@ const L = {
     newkey_warn:"⚠️ Сохраните приватный ключ в надёжном месте. Это <b>единственный</b> способ восстановить кошелёк. Потеряете ключ - потеряете монеты.",
     saved_btn:"Я сохранил ключ - продолжить",balance:"Баланс",your_addr:"Ваш адрес (нажмите, чтобы скопировать):",show_key:"показать приватный ключ",logout:"выйти",
     send_crb:"Отправить CRB",send_to_ph:"Адрес получателя (crb1...)",amount_ph:"Сумма CRB",sign_send:"Подписать и отправить",
-    fee_note:"Комиссия достаётся майнеру блока. Минимум не задан - но блоки собираются по убыванию комиссии.",
+    fee_note:"Комиссия подставляется автоматически и остаётся крошечной - плавает от загрузки сети. Можно изменить вручную.",
     history:"История",h_block:"Блок",h_type:"Тип",h_addr:"Адрес",h_amount:"Сумма",loading:"загрузка…",network:"Сеть",connecting:"подключение…",
     e_keylen:"ключ должен быть 128 hex-символов",err:"Ошибка",copied:"Адрес скопирован",
     show_confirm:"Показать приватный ключ? Убедитесь, что никто не смотрит на экран.",your_key:"Ваш приватный ключ:",
@@ -296,6 +297,9 @@ async function netInfo(){
   try {
     const s = await api('/status');
     $('netinfo').innerHTML = t('net')(s);
+    if (!feeEdited && s.fee_suggested != null) {
+      $('sendFee').value = (s.fee_suggested / UNIT).toFixed(8).replace(/0+$/, '').replace(/\.$/, '');
+    }
   } catch(e){ $('netinfo').textContent = t('node_down') + e.message; }
 }
 
