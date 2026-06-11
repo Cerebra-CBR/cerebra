@@ -1,13 +1,15 @@
-// cereblix-faucet: a small CRB faucet. Gives a tiny amount once per 24h per
-// address AND per IP, gated by a self-hosted proof-of-work captcha (no third
-// party, no keys, on-theme for a CPU-mined coin). Listens on localhost and is
-// meant to sit behind the Apache reverse proxy.
+// cereblix-faucet: a small CRB faucet whose anti-bot captcha is a REAL NeuroMorph
+// share. The browser mines one share (via the WASM hasher) against a template
+// that pays the treasury wallet - the same wallet that funds the faucet. So the
+// work claimants do is useful: it's genuine proof-of-work in our own algorithm,
+// and if a share also meets the network target it becomes a real block paying
+// the treasury. Gives a tiered amount once per 3h per address AND per IP.
+// Listens on localhost behind the Apache reverse proxy.
 package main
 
 import (
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -15,46 +17,30 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/big"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"cereblix/core"
+	nm "cereblix/neuromorph"
 )
 
 const cooldown = 3 * time.Hour
 
 var (
-	nodeAPI                    string
+	nodeAPI                     string
 	amtBase, amtMiner, amtWhale uint64
-	priv                       ed25519.PrivateKey
-	from                       string
-	powBits                    uint
-	sendMu                     sync.Mutex
-	nextNonce                  uint64 // local nonce counter (covers pending mempool txs)
-	store                      *limitStore
-	chMu                       sync.Mutex
-	challenges                 = map[string]int64{} // challenge -> expiry unix
+	priv                        ed25519.PrivateKey
+	from                        string
+	shareTarget                 *big.Int // fixed, easy target for the captcha share
+	sendMu                      sync.Mutex
+	nextNonce                   uint64
+	store                       *limitStore
 )
-
-// amountFor tiers the payout by how many blocks the address has mined:
-// 0 blocks -> base, >=1 -> miner, >100 -> whale.
-func amountFor(addr string) (uint64, int) {
-	var r struct {
-		Blocks int `json:"blocks"`
-	}
-	_ = nodeGet("/mined?addr="+addr, &r)
-	switch {
-	case r.Blocks > 100:
-		return amtWhale, r.Blocks
-	case r.Blocks >= 1:
-		return amtMiner, r.Blocks
-	default:
-		return amtBase, r.Blocks
-	}
-}
 
 // ----------------------------------------------------------- rate-limit store
 
@@ -70,6 +56,12 @@ func loadStore(path string) *limitStore {
 	if raw, err := os.ReadFile(path); err == nil {
 		_ = json.Unmarshal(raw, s)
 	}
+	if s.Addr == nil {
+		s.Addr = map[string]int64{}
+	}
+	if s.IP == nil {
+		s.IP = map[string]int64{}
+	}
 	return s
 }
 
@@ -78,7 +70,6 @@ func (s *limitStore) save() {
 	_ = os.WriteFile(s.path, raw, 0o600)
 }
 
-// remaining returns the cooldown left for addr or ip (0 if allowed). Prunes old.
 func (s *limitStore) remaining(addr, ip string, now int64) time.Duration {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -118,67 +109,25 @@ func (s *limitStore) record(addr, ip string, now int64) {
 	s.save()
 }
 
-// --------------------------------------------------------------- pow captcha
+// --------------------------------------------------- NeuroMorph share captcha
 
-func leadingZeroBits(h []byte) uint {
-	var n uint
-	for _, b := range h {
-		if b == 0 {
-			n += 8
-			continue
-		}
-		for i := 7; i >= 0; i-- {
-			if b&(1<<uint(i)) == 0 {
-				n++
-			} else {
-				return n
-			}
-		}
-	}
-	return n
+type fwork struct {
+	nodeID    string
+	header    []byte
+	seed      []byte
+	height    uint64
+	netTarget *big.Int
+	exp       int64
+	seen      map[uint64]bool
 }
 
-func newChallenge() string {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	c := hex.EncodeToString(b)
-	now := time.Now().Unix()
-	chMu.Lock()
-	// prune expired + bound memory
-	if len(challenges) > 5000 {
-		challenges = map[string]int64{}
-	}
-	for k, exp := range challenges {
-		if exp < now {
-			delete(challenges, k)
-		}
-	}
-	challenges[c] = now + 300 // valid 5 min
-	chMu.Unlock()
-	return c
-}
-
-// consumeChallenge verifies the challenge is live and the PoW solves it, then
-// burns it (one-time use).
-func consumeChallenge(c, nonce string) error {
-	now := time.Now().Unix()
-	chMu.Lock()
-	exp, ok := challenges[c]
-	if ok {
-		delete(challenges, c)
-	}
-	chMu.Unlock()
-	if !ok || exp < now {
-		return errors.New("captcha expired - refresh and try again")
-	}
-	h := sha256.Sum256([]byte(c + ":" + nonce))
-	if leadingZeroBits(h[:]) < powBits {
-		return errors.New("captcha not solved")
-	}
-	return nil
-}
-
-// ------------------------------------------------------------------ node i/o
+var (
+	chMu       sync.Mutex
+	challenges = map[string]*fwork{}
+	vmMu       sync.Mutex
+	vm         *nm.VM
+	vmEpoch    uint64 = ^uint64(0)
+)
 
 func nodeGet(path string, out any) error {
 	resp, err := http.Get(nodeAPI + path)
@@ -192,14 +141,84 @@ func nodeGet(path string, out any) error {
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
+// newChallenge fetches a template paying the treasury and stores it under a
+// fresh one-time challenge id. The browser mines it to the (easy) shareTarget.
+func newChallenge() (string, *fwork, error) {
+	var gw struct {
+		ID, Header, Target, Seed string
+		Height                   uint64
+	}
+	if err := nodeGet("/getwork?addr="+from, &gw); err != nil {
+		return "", nil, err
+	}
+	header, e1 := hex.DecodeString(gw.Header)
+	seed, e2 := hex.DecodeString(gw.Seed)
+	netT, ok := new(big.Int).SetString(gw.Target, 16)
+	if e1 != nil || e2 != nil || !ok || len(header) != core.HeaderLen {
+		return "", nil, errors.New("bad template")
+	}
+	idb := make([]byte, 16)
+	_, _ = rand.Read(idb)
+	id := hex.EncodeToString(idb)
+	fw := &fwork{nodeID: gw.ID, header: header, seed: seed, height: gw.Height,
+		netTarget: netT, exp: time.Now().Unix() + 300, seen: map[uint64]bool{}}
+	chMu.Lock()
+	now := time.Now().Unix()
+	if len(challenges) > 5000 {
+		challenges = map[string]*fwork{}
+	}
+	for k, w := range challenges {
+		if w.exp < now {
+			delete(challenges, k)
+		}
+	}
+	challenges[id] = fw
+	chMu.Unlock()
+	return id, fw, nil
+}
+
+func hashFor(fw *fwork, nonce uint64) [32]byte {
+	hdr := make([]byte, len(fw.header))
+	copy(hdr, fw.header)
+	for i := 0; i < 8; i++ {
+		hdr[core.NonceOffset+i] = byte(nonce >> (8 * i))
+	}
+	epoch := fw.height / core.EpochLength
+	vmMu.Lock()
+	if vm == nil || epoch != vmEpoch {
+		vm = nm.NewVM(nm.DeriveParams(fw.seed))
+		vmEpoch = epoch
+	}
+	h := vm.Hash(hdr, fw.height)
+	vmMu.Unlock()
+	return h
+}
+
+// ------------------------------------------------------------------ payout
+
+func amountFor(addr string) (uint64, int) {
+	var r struct {
+		Blocks int `json:"blocks"`
+	}
+	_ = nodeGet("/mined?addr="+addr, &r)
+	switch {
+	case r.Blocks > 100:
+		return amtWhale, r.Blocks
+	case r.Blocks >= 1:
+		return amtMiner, r.Blocks
+	default:
+		return amtBase, r.Blocks
+	}
+}
+
 func sendCRB(to string, amount uint64) (string, error) {
 	sendMu.Lock()
 	defer sendMu.Unlock()
-	var st struct {
+	var stt struct {
 		Height uint64 `json:"height"`
 		Fee    uint64 `json:"fee_suggested"`
 	}
-	if err := nodeGet("/status", &st); err != nil {
+	if err := nodeGet("/status", &stt); err != nil {
 		return "", fmt.Errorf("node unreachable")
 	}
 	var acc struct {
@@ -209,21 +228,19 @@ func sendCRB(to string, amount uint64) (string, error) {
 	if err := nodeGet("/balance?addr="+from, &acc); err != nil {
 		return "", fmt.Errorf("node unreachable")
 	}
-	fee := st.Fee
+	fee := stt.Fee
 	if fee == 0 {
 		fee = 1000
 	}
 	if acc.Balance < amount+fee {
 		return "", fmt.Errorf("faucet is empty right now, try later")
 	}
-	// Use the higher of the confirmed nonce and our local counter so back-to-back
-	// sends don't reuse a nonce that's still pending in the mempool.
 	nonce := acc.Nonce
 	if nextNonce > nonce {
 		nonce = nextNonce
 	}
 	tx := &core.Tx{To: to, Amount: amount, Fee: fee, Nonce: nonce}
-	core.SignTxAt(tx, priv, st.Height+1)
+	core.SignTxAt(tx, priv, stt.Height+1)
 	body, _ := json.Marshal(tx)
 	resp, err := http.Post(nodeAPI+"/tx", "application/json", strings.NewReader(string(body)))
 	if err != nil {
@@ -237,7 +254,6 @@ func sendCRB(to string, amount uint64) (string, error) {
 	}
 	_ = json.Unmarshal(raw, &r)
 	if r.Error != "" {
-		// On a nonce mismatch, resync to the chain's confirmed nonce next time.
 		if strings.Contains(r.Error, "nonce") {
 			nextNonce = 0
 		}
@@ -251,11 +267,8 @@ func sendCRB(to string, amount uint64) (string, error) {
 
 func clientIP(r *http.Request) string {
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// Use the LAST hop - the entry our own Apache appended is the real client.
-		// The earlier entries are client-supplied and spoofable (would let an
-		// attacker dodge the per-IP limit).
 		parts := strings.Split(xff, ",")
-		return strings.TrimSpace(parts[len(parts)-1])
+		return strings.TrimSpace(parts[len(parts)-1]) // last hop = added by our Apache
 	}
 	host := r.RemoteAddr
 	if i := strings.LastIndex(host, ":"); i >= 0 {
@@ -273,20 +286,24 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 func main() {
 	listen := flag.String("listen", "127.0.0.1:18753", "listen address")
 	flag.StringVar(&nodeAPI, "node", "http://127.0.0.1:18751/api", "node API base")
-	keyfile := flag.String("keyfile", "/opt/cerebra/NETWORK_WALLET.txt", "wallet file with PRIVATE KEY line")
+	keyfile := flag.String("keyfile", "/opt/cerebra/faucet-wallet.txt", "treasury wallet file with PRIVATE KEY line")
 	base := flag.Float64("base", 0.001, "CRB for addresses that mined 0 blocks")
 	miner := flag.Float64("miner", 0.01, "CRB for addresses that mined >=1 block")
 	whale := flag.Float64("whale", 0.1, "CRB for addresses that mined >100 blocks")
-	bits := flag.Uint("bits", 18, "PoW captcha difficulty (leading zero bits)")
+	work := flag.Uint64("work", 160, "captcha share difficulty in expected hashes (browser NeuroMorph)")
 	datadir := flag.String("datadir", "/var/lib/cerebra", "where to store rate-limit state")
 	flag.Parse()
 
 	amtBase = uint64(*base * float64(core.CoinUnit))
 	amtMiner = uint64(*miner * float64(core.CoinUnit))
 	amtWhale = uint64(*whale * float64(core.CoinUnit))
-	powBits = *bits
+	// shareTarget = 2^256 / work  (an easy target so a browser finds one share
+	// in a handful of seconds, independent of network difficulty).
+	if *work < 1 {
+		*work = 1
+	}
+	shareTarget = new(big.Int).Div(new(big.Int).Lsh(big.NewInt(1), 256), new(big.Int).SetUint64(*work))
 
-	// Load the spending key (PRIVATE KEY line, 64-byte ed25519 hex).
 	raw, err := os.ReadFile(*keyfile)
 	if err != nil {
 		log.Fatalf("read keyfile: %v", err)
@@ -300,21 +317,43 @@ func main() {
 	}
 	sk, err := hex.DecodeString(strings.TrimSpace(skHex))
 	if err != nil || len(sk) != ed25519.PrivateKeySize {
-		log.Fatalf("bad private key in keyfile (need %d-byte hex)", ed25519.PrivateKeySize)
+		log.Fatalf("bad private key in keyfile")
 	}
 	priv = ed25519.PrivateKey(sk)
 	from = core.AddrFromPub(priv.Public().(ed25519.PublicKey))
 	store = loadStore(*datadir + "/faucet.json")
-	log.Printf("faucet: from %s tiers base/miner/whale=%d/%d/%d synapses, 3h cooldown, pow=%d bits, listen %s",
-		from, amtBase, amtMiner, amtWhale, powBits, *listen)
+	log.Printf("faucet: treasury %s tiers %d/%d/%d, 3h cooldown, share work=%d, listen %s",
+		from, amtBase, amtMiner, amtWhale, *work, *listen)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/faucet/info", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]any{"from": from, "bits": powBits, "cooldown_h": 3,
+		writeJSON(w, 200, map[string]any{"from": from, "cooldown_h": 3,
 			"base": amtBase, "miner": amtMiner, "whale": amtWhale})
 	})
+	// /faucet/challenge?addr=... : checks cooldown, then hands out a real mining
+	// job (paying the treasury) for the browser to solve as the captcha.
 	mux.HandleFunc("/faucet/challenge", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]any{"challenge": newChallenge(), "bits": powBits})
+		addr := strings.TrimSpace(r.URL.Query().Get("addr"))
+		if !core.ValidAddr(addr) {
+			writeJSON(w, 400, map[string]string{"error": "enter a valid crb1 address"})
+			return
+		}
+		if left := store.remaining(addr, clientIP(r), time.Now().Unix()); left > 0 {
+			writeJSON(w, 429, map[string]string{"error": fmt.Sprintf("already claimed - try again in %dh %dm", int(left.Hours()), int(left.Minutes())%60)})
+			return
+		}
+		id, fw, err := newChallenge()
+		if err != nil {
+			writeJSON(w, 503, map[string]string{"error": "faucet backend busy, try again"})
+			return
+		}
+		writeJSON(w, 200, map[string]any{
+			"challenge": id,
+			"header":    hex.EncodeToString(fw.header),
+			"target":    core.TargetToHex(shareTarget),
+			"seed":      hex.EncodeToString(fw.seed),
+			"height":    fw.height,
+		})
 	})
 	mux.HandleFunc("/faucet/claim", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
@@ -335,16 +374,40 @@ func main() {
 			writeJSON(w, 400, map[string]string{"error": "enter a valid crb1 address"})
 			return
 		}
-		if err := consumeChallenge(req.Challenge, req.Nonce); err != nil {
-			writeJSON(w, 400, map[string]string{"error": err.Error()})
+		nonce, perr := strconv.ParseUint(req.Nonce, 10, 64)
+		if perr != nil {
+			writeJSON(w, 400, map[string]string{"error": "bad nonce"})
 			return
+		}
+		// consume the one-time challenge
+		chMu.Lock()
+		fw := challenges[req.Challenge]
+		if fw != nil {
+			delete(challenges, req.Challenge)
+		}
+		chMu.Unlock()
+		if fw == nil || fw.exp < time.Now().Unix() {
+			writeJSON(w, 400, map[string]string{"error": "challenge expired - refresh and mine again"})
+			return
+		}
+		// verify the NeuroMorph share
+		h := hashFor(fw, nonce)
+		if !core.HashMeetsTarget(h, shareTarget) {
+			writeJSON(w, 400, map[string]string{"error": "invalid share"})
+			return
+		}
+		// jackpot: the share also meets the network target -> real block to treasury
+		if core.HashMeetsTarget(h, fw.netTarget) {
+			body, _ := json.Marshal(map[string]any{"id": fw.nodeID, "nonce": nonce})
+			if resp, e := http.Post(nodeAPI+"/submitwork", "application/json", strings.NewReader(string(body))); e == nil {
+				resp.Body.Close()
+				log.Printf("faucet: share also solved BLOCK %d -> treasury", fw.height)
+			}
 		}
 		ip := clientIP(r)
 		now := time.Now().Unix()
 		if left := store.remaining(req.Addr, ip, now); left > 0 {
-			h := int(left.Hours())
-			m := int(left.Minutes()) % 60
-			writeJSON(w, 429, map[string]string{"error": fmt.Sprintf("already claimed - try again in %dh %dm", h, m)})
+			writeJSON(w, 429, map[string]string{"error": fmt.Sprintf("already claimed - try again in %dh %dm", int(left.Hours()), int(left.Minutes())%60)})
 			return
 		}
 		amt, mined := amountFor(req.Addr)
