@@ -268,6 +268,9 @@ func onBlockFound(height uint64) {
 	total := st.RoundShares
 	if total > 0 {
 		for m, s := range st.Shares {
+			if m == poolAddr {
+				continue // operator's own mining already receives the block coinbase
+			}
 			st.Owed[m] += uint64(float64(pot) * (s / total))
 		}
 	}
