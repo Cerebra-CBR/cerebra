@@ -6,6 +6,8 @@ NETWORK_WALLET.txt
 *.token
 # tools/srv.py contains the deploy server root password
 tools/srv.py
+# OPERATIONS.md is the private runbook (server, deploy, keys) - never publish
+OPERATIONS.md
 
 # Wallets & chain data
 wallet.json

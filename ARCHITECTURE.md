@@ -1,526 +1,359 @@
-# Cereblix (CRB) - Архитектура проекта
+# Cereblix (CRB) - Architecture
 
-> Полное техническое описание криптовалюты Cereblix: алгоритм, блокчейн, нода,
-> майнер, кошелёк, сайт, развёртывание и эксплуатация.
+> Complete technical specification of Cereblix: the NeuroMorph proof-of-work,
+> the blockchain core, the node, miner and wallets.
 >
-> Версия документа: 1.1 · Дата запуска сети: 2026-06-11 · Лицензия кода: открытая.
-> Статус: экспериментальное ПО. Без премайна, без фонда, без гарантий. DYOR.
+> Document version: 2.0 - Network launched 2026-06-11 - Code license: MIT.
+> Status: experimental software. No premine, no fund, no guarantees. DYOR.
 
 ---
 
-## 1. Обзор и философия
+## 1. Overview & philosophy
 
-Cereblix - это Proof-of-Work-криптовалюта, написанная с нуля на Go (только
-стандартная библиотека, ноль внешних зависимостей). Главная идея - **майнинг
-исключительно на центральном процессоре (CPU)**, с пожизненной защитой от ASIC
-и невыгодностью GPU.
+Cereblix is a Proof-of-Work cryptocurrency written from scratch in Go (standard
+library only, zero external dependencies). The core idea: **mining is possible
+only on a general-purpose CPU**, with lifelong ASIC resistance and GPU
+unprofitability.
 
-Защита достигается не «тяжёлой функцией», а **самомутирующим алгоритмом
-NeuroMorph**: семантика вычислений переписывается каждые 4096 блоков из энтропии
-самой цепи. Спроектировать фиксированное железо под алгоритм, который ещё не
-существует, невозможно - а единственное устройство, которому безразлично, какой
-именно код исполнять завтра, это универсальный процессор.
+The name encodes the design: **Cereb** (from *cerebrum*, the brain - your
+processor does the thinking) + **lix** (from *helix*, the DNA spiral - the
+algorithm rewrites its own "DNA" every epoch). The ticker reads out of it:
+**C**e**R**e**B**lix.
 
-Девиз проекта: **one CPU = one vote**.
+Resistance rests on **two independent levers**:
 
-### Что CPU-майнинг даёт и чего не даёт
-- **Даёт:** справедливое распределение монеты (порог входа - обычный ПК),
-  децентрализацию (хэшрейт размазан по тысячам машин, а не сосредоточен у
-  ASIC-операторов), эгалитарный нарратив.
-- **Не даёт:** ценности. Цена монеты определяется только спросом (применение,
-  ликвидность, сообщество), которого у свежезапущенной сети нет. Алгоритм
-  майнинга - это про честность раздачи, а не про стоимость.
+1. **Computational diversity (the self-mutating VM).** Each nonce runs a unique
+   random program on a virtual machine that mirrors a CPU (integer, float, AES,
+   data-dependent branches). Optimal hardware for that workload converges to a
+   processor. On top of it, the VM's *semantics* are reborn every epoch from
+   chain entropy, so fixed-function hardware for "next epoch's algorithm" cannot
+   be designed in advance.
+2. **Memory-hardness (the dataset).** A 64 MiB epoch dataset is read by a chain
+   of data-dependent random accesses in every hash, binding the work to DRAM
+   latency. A cheap ASIC cannot fit that on-die (SRAM is far too expensive at
+   64 MiB) and must use external DRAM - which erases its cost/latency edge.
+
+Motto: **one CPU = one vote.**
+
+### What CPU mining gives - and doesn't
+- **Gives:** fair distribution (entry cost is an ordinary PC), decentralization
+  (hashrate spread across many machines, not concentrated in ASIC operators),
+  an egalitarian network.
+- **Doesn't give:** value. A coin's price comes only from demand (use,
+  liquidity, community), which a freshly launched network has none of. Mining
+  fairness is about honest distribution, not worth.
 
 ---
 
-## 2. Структура репозитория
+## 2. Repository layout
 
 ```
-cerebra/
-├── go.mod                      // module cereblix, go 1.21
-├── ARCHITECTURE.md             // этот файл
-├── KEYS.txt                    // приватные ключи (НЕ публиковать)
-├── neuromorph/
-│   ├── neuromorph.go           // PoW-VM: параметры эпохи, генерация программ, Hash()
-│   └── neuromorph_test.go      // тесты детерминизма + бенчмарк хэшрейта
-├── core/
-│   ├── types.go                // Tx, Block, адреса, генезис, сложность, эмиссия
-│   └── chain.go                // Chain: состояние, мемпул, ретаргет, реорги, эпохи
-├── node/
-│   └── node.go                 // P2P-синхронизация, RPC API, getwork/submitwork, встроенный майнер
-├── cmd/
-│   ├── cereblixd/main.go        // демон полной ноды
-│   ├── cereblix-miner/main.go   // отдельный CPU-майнер (Win/Linux)
-│   └── cereblix-wallet/main.go  // CLI-кошелёк
-├── web/
-│   ├── site/index.html         // лендинг проекта + мини-эксплорер
-│   └── wallet/index.html       // веб-кошелёк (ключи только в браузере)
-├── deploy/
-│   └── cereblixd.service        // systemd-юнит seed-ноды
-└── tools/
-    ├── srv.py                  // SSH/SFTP-хелпер для деплоя
-    └── test-sha.js             // проверка JS-реализации SHA-256
+neuromorph/   NeuroMorph PoW virtual machine + 64 MiB dataset
+core/         chain, account state, mempool, consensus rules
+node/         P2P sync, JSON RPC, getwork/submitwork, built-in miner
+cmd/          cereblixd (node), cereblix-miner, cereblix-wallet
+web/          project site, block explorer, web wallet
+deploy/       systemd unit template
 ```
 
-Объём ядра (core + neuromorph + node + cmd) - ~2500 строк Go.
+Core (core + neuromorph + node + cmd) is ~2700 lines of Go.
 
 ---
 
-## 3. Алгоритм NeuroMorph v1
+## 3. NeuroMorph proof of work
 
-Файл: `neuromorph/neuromorph.go`. Это виртуальная машина, исполняющая для
-каждого варианта блока (nonce) уникальную случайную программу.
+File: `neuromorph/neuromorph.go`. A virtual machine that executes a unique
+random program for each block candidate (nonce).
 
-### 3.1. Параметры эпохи (`Params`)
-Выводятся из «семени эпохи» функцией `DeriveParams(epochSeed)`:
+### 3.1. Per-epoch parameters (`Params`)
+Derived from the "epoch seed" by `DeriveParams(epochSeed)`:
 
-| Поле         | Диапазон / смысл                                                   |
-|--------------|--------------------------------------------------------------------|
-| `ProgSize`   | 384…768 инструкций в программе                                     |
-| `Loops`      | 32…64 внешних цикла исполнения на один хэш                         |
-| `BranchMask` | маска условия для ветвлений (8 бит на меняющейся позиции)          |
-| `RotSalt`    | соль ротаций/xor для перемешивания регистров                       |
-| `OpTable`    | таблица 256 значений → опкод; веса опкодов 1…8, ре-роллятся каждую эпоху |
-| `AesKey`     | 16-байтовый AES-ключ эпохи                                         |
+| Field        | Range / meaning                                                  |
+|--------------|------------------------------------------------------------------|
+| `ProgSize`   | 384..768 instructions per program                                |
+| `Loops`      | 32..64 outer execution loops per hash                            |
+| `BranchMask` | condition mask for CBRANCH (8 bits at a varying position)        |
+| `RotSalt`    | per-epoch rotation/xor salt                                      |
+| `OpTable`    | 256-entry value->opcode table; opcode weights 1..8, re-rolled each epoch |
+| `AesKey`     | 16-byte per-epoch AES key                                        |
+| `DatasetKey` | 16-byte key seeding the 64 MiB epoch dataset                     |
 
-Всё это псевдослучайно раскрывается из `epochSeed` через SHA-256 с разными
-префиксами (`nm-params|`, `nm-weights|`).
+All of it is pseudo-randomly expanded from `epochSeed` via SHA-256 with distinct
+prefixes (`nm-params|`, `nm-weights|`, `nm-dataset|`).
 
-### 3.2. Набор инструкций (15 опкодов)
-- **Целочисленные:** `IADD`, `IMUL`, `IMULH` (старшая половина умножения),
-  `IXOR`, `IROTR` (ротация), `INEG`.
+### 3.2. Instruction set (15 opcodes)
+- **Integer:** `IADD`, `IMUL`, `IMULH` (high half of the product), `IXOR`,
+  `IROTR` (rotate), `INEG`.
 - **Float (IEEE-754 float64):** `FADD`, `FMUL`, `FDIV`, `FSQRT`.
-- **Память:** `LOAD`, `STORE` - случайный доступ к scratchpad.
-- **Управление:** `CBRANCH` - обратный переход, зависящий от данных
-  (ограничен 8 проходами на инструкцию, чтобы гарантировать остановку).
-- **Крипто:** `AESR` - аппаратный AES-раунд над словом scratchpad.
-- **Кросс-домен:** `XDOM` - перекладывает биты между целыми и float-регистрами,
-  не давая разделить два домена на отдельное железо.
+- **Memory:** `LOAD`, `STORE` - random access to the scratchpad.
+- **Control:** `CBRANCH` - data-dependent backward branch, bounded to 8 takes
+  per instruction to guarantee halting.
+- **Crypto:** `AESR` - one hardware AES round over a scratchpad word.
+- **Cross-domain:** `XDOM` - moves bits between integer and float registers, so
+  the two domains cannot be split onto separate hardware.
 
-Регистры: 16 целочисленных (`uint64`) + 8 float (`float64`).
+Registers: 16 integer (`uint64`) + 8 float (`float64`).
 
 ### 3.3. Scratchpad
-- **Размер: 2 МиБ** (`ScratchBytes = 2<<20`) - намеренно под объём L2/L3-кэша
-  современного CPU. Случайный доступ делает дешёвую внешнюю память бесполезной.
-- Заполняется AES-CTR-keystream'ом, засеянным хэшем заголовка блока.
+- **2 MiB** (`ScratchBytes = 2<<20`), sized for the CPU's L2/L3 cache. Random
+  access makes cheap external memory useless for this part.
+- Filled with an AES-CTR keystream seeded by the block-header hash.
 
-### 3.4. Один проход Hash(header)
+### 3.4. The 64 MiB dataset (memory-hardness)
+- A read-only **64 MiB** buffer (`DatasetBytes = 64<<20`), regenerated each epoch
+  from `DatasetKey` (AES-CTR) and **shared across all threads** (memory cost is
+  64 MiB total, not per core). Generated lazily on first use.
+- Every outer loop performs a chain of **data-dependent random reads**: each
+  address depends on the previously read value, so the walk cannot be prefetched
+  and the hash is bound to memory latency.
+- **Why 64 MiB and not 2 GB:** the goal is to force an ASIC off-die. On-die SRAM
+  is prohibitively expensive well below 64 MiB, so even 64 MiB pushes an ASIC to
+  external DRAM, while still fitting in the RAM of a phone, a Raspberry Pi, or a
+  small VPS. (CryptoNight's 2 MiB scratchpad with no dataset was ASIC'd in 2018;
+  that is the lesson this closes.)
+- **Activation:** the dataset turns on at block height `DatasetHeight` (240 on
+  the launched network). Below it, hashing is byte-identical to the
+  dataset-free algorithm, so pre-activation blocks stay valid - the feature was
+  added by height activation, without restarting the chain.
+
+### 3.5. One Hash(header, height) pass
 1. `seed = sha256("nm-seed|" + header)`.
-2. Заполнить scratchpad (`fillScratch`).
-3. Сгенерировать программу `ProgSize` инструкций (`genProgram`): AES-CTR-поток
-   раскрывается по 8 байт на инструкцию - `байт0` → опкод через `OpTable`,
-   `байт1` → регистр-приёмник, `байт2` → регистр-источник, `байты4-7` →
-   32-битный immediate.
-4. Инициализировать регистры из seed и головы scratchpad.
-5. Прогнать `Loops` циклов исполнения программы; после каждого цикла - вмешать
-   регистры обратно в scratchpad (нельзя пропустить работу) и свернуть float в
-   целые регистры.
-6. Свернуть весь scratchpad XOR'ом в 8 слов.
-7. Финальный digest: `SHA-256("NMv1" + seed + регистры + float + fold)`.
+2. Fill the scratchpad (`fillScratch`).
+3. Generate the `ProgSize`-instruction program (`genProgram`): the AES-CTR stream
+   is consumed 8 bytes per instruction - `byte0` -> opcode via `OpTable`,
+   `byte1` -> destination register, `byte2` -> source register, `bytes4..7` ->
+   a 32-bit immediate.
+4. Initialize registers from the seed and scratchpad head.
+5. Run `Loops` execution loops. After each loop (when `height >= DatasetHeight`)
+   perform the dependent dataset-read chain, then fold registers back into the
+   scratchpad so no loop can be skipped.
+6. XOR-fold the whole scratchpad into 8 words.
+7. Final digest: `SHA-256("NMv1" + seed + registers + floats + fold)`.
 
-Результат - 32 байта; сравнивается с целью сложности как big-endian число.
+The 32-byte result is compared against the difficulty target as a big-endian
+number.
 
-### 3.5. Детерминизм (консенсус-критично)
-- Все float-выражения - **одиночные бинарные операции** (без fused multiply-add),
-  чтобы результат был идентичен на amd64/arm64.
-- После каждой float-инструкции значение нормализуется (нет NaN/Inf/нуля).
-- **Консенсус-критичная платформа - amd64.** Тест `TestDeterminism` фиксирует
-  эталонный хэш; `go test ./neuromorph` обязан проходить.
-- **Замеренная производительность** (Go 1.22, эпоха 0): ~4.1 мс/хэш ≈
-  **~240 H/s на ядро** на AMD EPYC-Rome; на десктопных Ryzen/Core - сопоставимо
-  или быстрее (зависит от кэша). Реальные замеры: 2 потока ≈ 570-690 H/s.
+### 3.6. Determinism (consensus-critical)
+- Every float expression is a **single binary operation** (no fused
+  multiply-add), so results are identical across machines.
+- After each float instruction the value is normalized (no NaN/Inf/zero).
+- **The consensus platform is amd64.** `TestDeterminism` pins a reference hash;
+  `go test ./neuromorph` must pass.
+- Measured: ~4 ms/hash, i.e. **~240 H/s per core** on a server CPU; desktop
+  Ryzen/Core are comparable or faster (cache-dependent).
 
-### 3.6. Эпохальная мутация (анти-ASIC)
-- Эпоха = `height / EpochLength` (4096 блоков ≈ 2.8 суток).
-- Семя эпохи N - хэш последнего блока эпохи N−1 (`epochSeedFor`); для эпохи 0 -
-  константа `EpochSeed0()` (`sha256("cerebra/neuromorph/v1/epoch0/2026-06-11")`).
-- На границе эпохи `DeriveParams` выдаёт новые веса опкодов, длину программ,
-  число циклов, маски, AES-ключ → правила VM меняются. ASIC, выпущенный сегодня,
-  через эпоху исполняет «не тот» алгоритм.
+### 3.7. Epoch mutation (anti-ASIC)
+- Epoch = `height / EpochLength` (4096 blocks, ~2.8 days).
+- The epoch-N seed is the hash of the last block of epoch N-1 (`epochSeedFor`);
+  epoch 0 uses a fixed constant.
+- At each boundary `DeriveParams` yields new opcode weights, program length, loop
+  count, masks, AES key and dataset -> the VM's rules change. An ASIC shipped
+  today runs a "different" algorithm one epoch later.
 
-### 3.7. Почему GPU невыгоден
-Случайные ветвления (`CBRANCH`), зависящие от данных, раз в несколько инструкций
-вызывают дивергенцию warp'ов - тысячи ядер видеокарты простаивают, и она
-работает на скорости одного-двух скалярных ядер, т.е. медленнее ноутбука.
+### 3.8. Why GPUs are unprofitable
+Data-dependent branches (`CBRANCH`) every few instructions cause warp
+divergence: a GPU runs at the speed of one or two of its scalar cores, i.e.
+slower than a laptop.
 
-### 3.8. От чего зависит хэшрейт
-- **Число/частота ядер** - почти линейно (флаг `-threads`).
-- **Размер и скорость кэша L2/L3** - ключевой фактор (scratchpad 2 МиБ).
-- **AES-NI** - обязателен для скорости (есть на любом CPU после ~2011).
-
-Разброс между топовым CPU и ноутбуком - в разы, а не в тысячи раз (в отличие от
-ASIC vs GPU). Это и есть цель: ноутбук остаётся конкурентоспособным.
-
----
-
-## 4. Ядро блокчейна (`core`)
-
-### 4.1. Экономические параметры (`core/types.go`)
-| Параметр                | Значение                                              |
-|-------------------------|-------------------------------------------------------|
-| Тикер                   | CRB                                                   |
-| Единица                 | 1 CRB = 10⁸ синапсов (`CoinUnit = 100_000_000`)       |
-| Время блока             | 60 секунд (`BlockTargetSpacing`)                      |
-| Окно ретаргета          | 20 блоков (`RetargetWindow`)                          |
-| Начальная награда       | 50 CRB (`InitialReward`)                              |
-| Халвинг                 | каждые 1 051 200 блоков ≈ 2 года (`HalvingInterval`)  |
-| Обнуление награды       | после 33 халвингов                                    |
-| **Максимум эмиссии**    | **~105 120 000 CRB** (≈ 100 × HalvingInterval)        |
-| Длина эпохи VM          | 4096 блоков (`EpochLength`)                           |
-| Макс. транзакций в блоке| 200 (`MaxBlockTxs`)                                   |
-| Дрейф времени в будущее | 300 секунд (`MaxFutureDrift`)                         |
-| Премайн                 | **0** - генезис-блок пуст                             |
-
-Эмиссия - геометрическая прогрессия 50+25+12.5+… = 100 CRB «на слот» в среднем;
-фактически чуть меньше за счёт целочисленного округления (`InitialReward >> halvings`).
-
-### 4.2. Сложность и работа
-- Цель (target) - 256-битное число; хэш проходит, если `hash ≤ target`.
-- `MaxTarget = 2²⁴⁴` (потолок лёгкости), `GenesisTarget = 2²⁴¹` (старт).
-- `WorkOf(target) = 2²⁵⁶ / (target+1)` - ожидаемое число хэшей; форк
-  выбирается по **максимальной кумулятивной работе** (не по длине).
-- Ретаргет (`expectedTarget`): по окну из 20 блоков, средний target ×
-  (фактическое время / ожидаемое), с зажимом фактического времени в коридор
-  [¼…4×]. Защищает от резких скачков.
-
-### 4.3. Адреса и подписи
-- Ключи: **ed25519**.
-- Адрес: `crb1` + hex(`SHA-256(pubkey)`[:20]) → `crb1` + 40 hex-символов.
-- Проверка адреса - `ValidAddr`: префикс + длина + валидный hex.
-
-### 4.4. Транзакции (`Tx`)
-Поля: `FromPub` (hex pubkey; пусто = coinbase), `To`, `Amount`, `Fee`, `Nonce`
-(account-nonce; для coinbase = высота блока), `Sig`.
-
-- Подписываемая строка: `cerebra-tx-v1|<from_pub>|<to>|<amount>|<fee>|<nonce>`.
-- ID транзакции = `SHA-256(payload + "|" + sig)`.
-- Модель - **account/nonce** (как Ethereum), не UTXO. У каждого аккаунта баланс и
-  монотонный nonce; защита от повторов через nonce.
-
-### 4.5. Блок (`Block`)
-Поля заголовка (фикс. 124 байта, little-endian): версия, высота, время,
-prev-hash, tx-root, target, nonce. Тело - список транзакций.
-
-- Hash блока = `SHA-256(HeaderBytes())` - это идентификатор блока.
-- **PoW-хэш ≠ block-hash:** PoW считается NeuroMorph-VM над `HeaderBytes()`,
-  а block-hash - обычный SHA-256 того же заголовка. Nonce лежит в последних
-  8 байтах заголовка (`NonceOffset`), их перебирает майнер.
-- `TxRoot = SHA-256("cerebra-txroot-v1" + конкатенация ID транзакций)`.
-
-### 4.6. Менеджер цепи (`core/chain.go`)
-`Chain` хранит: срез блоков, состояние аккаунтов (`State`), кумулятивную работу,
-мемпул, кэш PoW-проверок, кэш VM по эпохам.
-
-- **Хранилище:** `blocks.jsonl` - по одному JSON-блоку на строку
-  (человекочитаемый формат, аудит глазами). Атомарная перезапись через `.tmp`.
-- **Валидация блока** (`validateBlock`): версия, высота, prev-hash, время строго
-  больше **медианы 11 последних блоков** (нельзя в прошлое), не слишком далёкое
-  будущее (+300 с), правильный target,
-  coinbase-правила (награда = subsidy + комиссии, nonce = высота), уникальность
-  и подписи транзакций, корректность баланса/nonce, и наконец **PoW**.
-- **`AddBlock`** - расширение текущего tip'а.
-- **`TryAdoptChain`** - реорг: принимает форк, только если его кумулятивная
-  работа больше; полностью переигрывает состояние от точки форка.
-- **Мемпул:** `AddTx` с проверкой против состояния + цепочек nonce от того же
-  отправителя; вытеснение невалидных при новых блоках; лимит 10 000.
-- **`BuildTemplate`** - собирает незамайненный блок: coinbase + жадно выбранные
-  транзакции из мемпула (по возрастанию nonce, по убыванию комиссии).
-
-### 4.7. Генезис
-- Время: `1781136000` (2026-06-11 00:00:00 UTC).
-- Один пустой coinbase на неизрасходуемый адрес `crb1` + 40 нулей, amount 0.
-- Послание (в поле sig coinbase):
-  `Cerebra genesis | 2026-06-11 | one CPU, one vote - silicon shall not rule`.
+### 3.9. What drives hashrate
+- **Core count / frequency** - near-linear (the `-threads` flag).
+- **L2/L3 cache size and speed** - the scratchpad lives there.
+- **Dataset locality** - on commodity CPUs the 64 MiB dataset spills to DRAM
+  (memory-latency bound); CPUs with very large L3 cache it.
+- **AES-NI** - required for speed (present on any CPU since ~2011).
 
 ---
 
-## 5. Нода (`node` + `cmd/cereblixd`)
+## 4. Blockchain core (`core`)
 
-Один бинарник без зависимостей. Поднимает два HTTP-сервера (P2P и RPC) и,
-опционально, встроенный майнер.
+### 4.1. Economic parameters (`core/types.go`)
+| Parameter            | Value                                              |
+|----------------------|----------------------------------------------------|
+| Ticker               | CRB (1 CRB = 10^8 synapses)                         |
+| Algorithm            | NeuroMorph - self-mutating, memory-hard PoW VM     |
+| Block time           | 60 s, retarget every 20 blocks                     |
+| Reward               | 50 CRB, halving every 1,051,200 blocks (~2 years)  |
+| Max supply           | ~105,120,000 CRB                                    |
+| VM mutation epoch    | 4096 blocks (~2.8 days)                             |
+| Premine              | **0** - empty genesis                              |
+| Signatures / addrs   | ed25519, `crb1` + SHA-256(pubkey)[:20]             |
 
-### 5.1. P2P-протокол (HTTP, по умолчанию `:18750`)
-Эндпоинты под `/p2p/`:
-- `GET /p2p/tip` - высота, hash, кумулятивная работа (hex).
-- `GET /p2p/hash?h=N` - hash блока на высоте N (для поиска общего предка).
-- `GET /p2p/blocks?from=N&count=K` - пачка блоков (≤200).
-- `POST /p2p/block` - приём блока от пира.
-- `POST /p2p/tx` - приём транзакции.
-- `GET /p2p/peers` - список известных пиров.
+### 4.2. Difficulty & work
+- The target is a 256-bit number; a hash is valid if `hash <= target`.
+- Retarget over a 20-block window: average target x (actual time / expected
+  time), clamped to a [1/4 .. 4x] band against time-warp.
+- Fork choice is by **most cumulative work** (`WorkOf(target) = 2^256 /
+  (target+1)`), not by length.
 
-Синхронизация (`SyncLoop`, раз в 10 с): опрашивает пиров, при большей
-кумулятивной работе **бинарным поиском** находит общего предка, докачивает блоки
-пачками по 200 (адопция порциями до 5000 блоков, чтобы не держать всё в памяти)
-и вызывает `TryAdoptChain`. Если присланный через `/p2p/block` блок не ложится
-на tip, нода сама инициирует синхронизацию с этим пиром. Пиры представляются
-заголовком `X-Cereblix-Peer`; список сохраняется в `peers.json` (лимит 64).
-Новые блоки/транзакции рассылаются всем известным пирам.
+### 4.3. Addresses & transactions
+- Keys: ed25519. Address: `crb1` + hex(SHA-256(pubkey)[:20]).
+- Account/nonce model (not UTXO): each account has a balance and a monotonic
+  nonce; replay protection is via the nonce.
+- Signing payload: `cerebra-tx-v1|<from_pub>|<to>|<amount>|<fee>|<nonce>`
+  (an internal protocol constant; not the brand).
 
-### 5.2. RPC API (HTTP, по умолчанию `127.0.0.1:18751`)
-Все ответы - JSON, с CORS `*`. Под `/api/`:
+### 4.4. Blocks
+- Fixed 124-byte header (version, height, time, prev-hash, tx-root, target,
+  nonce). The block id is `SHA-256(header)`; the PoW is the NeuroMorph hash of
+  the same header. The nonce occupies the last 8 header bytes.
+- The chain is stored as human-readable JSONL (one block per line) - auditable by
+  eye.
 
-| Эндпоинт                       | Назначение                                          |
-|--------------------------------|-----------------------------------------------------|
-| `GET /api/status`              | высота, tip, target, сложность, эмиссия, мемпул, пиры, эпоха, награда, оценка хэшрейта сети |
-| `GET /api/balance?addr=`       | баланс и nonce аккаунта                             |
-| `GET /api/history?addr=&limit=`| история транзакций адреса                           |
-| `GET /api/blocks?last=N`       | последние N блоков (сводка)                         |
-| `GET /api/block?h=N`           | полный блок по высоте                               |
-| `GET /api/mempool`             | транзакции в мемпуле                                |
-| `POST /api/tx`                 | отправить подписанную транзакцию                    |
-| `GET /api/getwork?addr=`       | шаблон для майнинга: header, target, seed, эпоха    |
-| `POST /api/submitwork`         | прислать найденный nonce                            |
-| `GET /api/params`              | константы сети (тикер, время блока, халвинг и т.д.) |
+### 4.5. Consensus rules
+Block validation checks version, height, prev-hash, timestamp (> median of last
+11 blocks, < now + 300 s), correct retarget target, coinbase rules (reward =
+subsidy + fees), unique signed transactions, balance/nonce correctness, and
+finally the proof of work.
 
-Хэшрейт сети оценивается как сумма работы за окно ретаргета / время окна.
-
-### 5.3. getwork / submitwork
-- `getwork` отдаёт `id` (= prev-hash|addr), hex-заголовок шаблона, target, seed
-  эпохи и высоту. Шаблоны кэшируются на ~8 секунд и инвалидируются при смене tip.
-- `submitwork` принимает `{id, nonce}`, подставляет nonce в кэшированный шаблон,
-  валидирует как полный блок и добавляет в цепь.
-
-### 5.4. Встроенный майнер (`node.Mine`)
-Запускается флагом `-mine`; крутит N горутин (`-threads`), каждая собирает
-шаблон, при необходимости пересоздаёт VM на границе эпохи, перебирает nonce и
-при попадании в target вызывает `AddBlock`. Раз в 30 с логирует H/s.
-
-### 5.5. Флаги `cereblixd`
-```
--datadir   каталог данных (по умолч. cereblix-data)
--p2p       адрес P2P (по умолч. :18750)
--rpc       адрес RPC (по умолч. 127.0.0.1:18751)
--peers     список seed-URL пиров через запятую (по умолч. http://188.34.181.191:18750)
--public    публичный URL этой ноды (анонсируется пирам)
--mine      включить встроенный майнер
--threads   число потоков майнера (по умолч. 2)
--coinbase  адрес для наград (обязателен при -mine)
-```
+### 4.6. Genesis
+Empty coinbase to an unspendable address, timestamp 2026-06-11 00:00:00 UTC.
+Coins exist only from mining.
 
 ---
 
-## 6. Отдельный майнер (`cmd/cereblix-miner`)
+## 5. 51% resistance (decentralized)
 
-CPU-майнер для AMD64 (Intel/AMD), Windows и Linux. Тянет работу с любой ноды по
-HTTP (`getwork`) и шлёт найденные шеры (`submitwork`).
+A day-old PoW chain cannot be cryptographically final against a >50% attacker -
+real security comes from accumulated hashrate over time. Cereblix ships
+**decentralized, no-trusted-party** mitigations that kill the cheap catastrophic
+attack and buy time:
 
-- По умолчанию использует **все ядра** (`runtime.NumCPU()`); ограничение -
-  `-threads N`.
-- Поллит `getwork` каждые 3 секунды; на границе эпохи сам пересобирает VM по
-  присланному seed.
-- **Дружелюбен к двойному клику:** если адрес не передан/некорректен - спрашивает
-  его интерактивно (`stdin`), а не закрывается мгновенно; при недоступной ноде
-  держит окно открытым («Press Enter to exit»).
-- Каждые 15 с печатает хэшрейт.
+- **Max reorg depth** (`-maxreorg`, default 100): any reorg that would rewrite
+  more than N blocks is rejected outright, killing rewrite-from-genesis attacks.
+- **Reorg-cost penalty** (`-reorg-penalty`, optional): deeper reorgs must carry
+  disproportionately more work.
+- **Checkpoints** (optional, **off by default**): a break-glass for an active
+  attack; not used in normal operation, so the default posture is fully
+  decentralized.
 
-Флаги:
-```
--node     базовый URL RPC ноды (по умолч. http://188.34.181.191/cereblix/api)
--addr     ваш адрес crb1... (куда идут награды)
--threads  число потоков (по умолч. = числу ядер)
-```
-
-Запуск:
-```
-cereblix-miner-windows-amd64.exe -addr crb1ВАШ_АДРЕС
-cereblix-miner-windows-amd64.exe -addr crb1ВАШ_АДРЕС -threads 4
-```
-
-> Антивирусы (Defender и др.) часто помечают любые неподписанные майнеры как
-> PUA/trojan. Не отключайте антивирус целиком - добавьте точечное исключение для
-> файла/папки майнера.
+Honest limit: these make deep rewrites impractical and raise the cost of shallow
+double-spends, but full finality still requires time and hashrate.
 
 ---
 
-## 7. CLI-кошелёк (`cmd/cereblix-wallet`)
+## 6. Node (`node` + `cmd/cereblixd`)
 
-```
-cereblix-wallet -new                          # создать пару ключей (печатает приватный ключ + адрес)
-cereblix-wallet -balance crb1...              # баланс адреса
-cereblix-wallet -key <128hex> -send crb1... -amount 12.5 [-fee 0.0001]
-cereblix-wallet -node http://.../api ...      # выбрать ноду
-```
-Приватный ключ - 128 hex-символов (ed25519 seed+pub). Подпись формируется
-локально по той же схеме `cerebra-tx-v1|...`.
+A single dependency-free binary running two HTTP servers (P2P, RPC) and an
+optional built-in CPU miner.
 
----
+### 6.1. P2P (HTTP, default `:18750`)
+`GET /p2p/tip`, `GET /p2p/hash?h=`, `GET /p2p/blocks?from=&count=`,
+`POST /p2p/block`, `POST /p2p/tx`, `GET /p2p/peers`. Sync (every 10 s) finds the
+common ancestor by binary search, downloads in batches and adopts the
+higher-work chain.
 
-## 8. Веб-кошелёк (`web/wallet/index.html`)
+### 6.2. RPC (HTTP, default `127.0.0.1:18751`, JSON, CORS)
+`status`, `balance`, `history`, `blocks`, `block?h=|hash=`, `tx` (GET lookup /
+POST submit), `mempool`, `getwork`, `submitwork`, `params`, `richlist`,
+`search`. `status` reports network hashrate (8-block window) and block age.
 
-Статическая страница. **Ключи генерируются и хранятся только в браузере**, сервер
-их не видит.
+### 6.3. getwork / submitwork
+External miners pull a header template + epoch seed via `getwork` and submit a
+nonce via `submitwork`; templates are cached briefly and tied to the current tip.
 
-- Подпись ed25519 - через **tweetnacl** (`nacl.min.js`, лежит рядом).
-- Адрес из публичного ключа - через **чистую JS-реализацию SHA-256** (встроена в
-  страницу). Это сознательное решение: WebCrypto (`crypto.subtle`) доступен
-  только на HTTPS/localhost, а сайт работает по HTTP - поэтому от него отказались.
-  Реализация SHA-256 проверена тестовыми векторами (`tools/test-sha.js`) и
-  сверена с адресом из Go-ноды.
-- Приватный ключ хранится в `localStorage` (после явного подтверждения «я
-  сохранил ключ»). Есть импорт/экспорт ключа и выход (очистка).
-- Функции: баланс, отправка CRB (подпись в браузере → `POST /api/tx`), история,
-  live-статистика сети.
+### 6.4. Built-in miner
+`-mine -threads N -coinbase crb1...` runs N worker goroutines, rebuilding the VM
+at epoch boundaries.
 
-Доступ: `http://188.34.181.191/cereblix/wallet/`.
-
----
-
-## 9. Сайт проекта (`web/site/index.html`)
-
-Лендинг + мини-эксплорер. Разделы: «Почему CRB», «Как работает NeuroMorph»,
-пошаговый майнинг, таблица параметров сети, последние блоки (live из
-`/api/blocks`), FAQ. Live-статистика тянется из `/api/status` и обновляется
-каждые 20 с. Содержит честную оговорку о рисках (новый алгоритм без внешнего
-аудита, экспериментальный проект).
-
-Доступ: `http://188.34.181.191/cereblix/`.
+### 6.5. Hardening
+- Run as an unprivileged user inside a systemd sandbox (a node compromise does
+  not become a host compromise).
+- HTTP request body-size cap, read/write/idle timeouts (anti slow-loris),
+  per-request panic recovery, and panic recovery in miner/sync goroutines.
+- RPC binds localhost; only P2P (and the reverse-proxied API) is public.
 
 ---
 
-## 10. Развёртывание (прод)
+## 7. Standalone miner (`cmd/cereblix-miner`)
 
-Сервер: **188.34.181.191** (Ubuntu 22.04, 8 ядер, 15 ГБ RAM, AMD EPYC-Rome).
-На сервере также работает чужой софт под Apache (в т.ч. SimTown) - **его не
-трогать**.
+CPU miner for amd64 (Intel/AMD), Windows & Linux. Pulls work from any node over
+HTTP and submits shares. Uses all cores by default (`-threads` to limit). On a
+double-click with no address it prompts for one instead of exiting.
 
-### 10.1. Раскладка на сервере
 ```
-/opt/cereblix/src         исходники
-/opt/cereblix/release     собранные бинарники (linux+windows)
-/opt/cereblix/bin         рабочие бинарники ноды
-/opt/cereblix/NETWORK_WALLET.txt   ключ кошелька seed-ноды (chmod 600)
-/var/lib/cerebra         данные цепи (blocks.jsonl, peers.json)
-/var/www/html/cereblix/   сайт, /wallet/, /downloads/
-/usr/local/go            Go 1.22 для сборки
+cereblix-miner -addr crb1YOURADDRESS
+cereblix-miner -addr crb1YOURADDRESS -threads 4
 ```
 
-### 10.2. systemd (`deploy/cereblixd.service`)
-Юнит `cereblixd`: запускает ноду с `-datadir /var/lib/cerebra -p2p :18750
--rpc 127.0.0.1:18751 -public http://188.34.181.191:18750 -mine -threads 2
--coinbase <адрес seed-ноды>`. `Restart=always`, `Nice=10` (чтобы не мешать
-соседям). Управление: `systemctl {status|restart|stop} cereblixd`,
-логи - `journalctl -u cereblixd`.
-
-### 10.3. Apache (reverse proxy)
-Конфиг `/etc/apache2/conf-available/cerebra.conf`:
-```
-ProxyPass        /cereblix/api/ http://127.0.0.1:18751/api/
-ProxyPassReverse /cereblix/api/ http://127.0.0.1:18751/api/
-```
-RPC слушает только localhost; наружу проброшен через Apache по пути
-`/cereblix/api/`. Сайт и кошелёк - статика в `/var/www/html/cereblix/`.
-
-### 10.4. Сеть / firewall (ufw)
-- Открыт `18750/tcp` (P2P).
-- `80/tcp` (Apache) - сайт, кошелёк, прокси RPC.
-- RPC-порт `18751` наружу **не** открыт (только через Apache).
-
-### 10.5. Сборка релизов
-Кросс-компиляция из `/opt/cereblix/src`:
-```
-GOOS={linux,windows} GOARCH=amd64 go build -ldflags '-s -w' -o <out> ./cmd/<app>
-```
-Выкладываются в `/var/www/html/cereblix/downloads/`:
-`cereblixd`, `cereblix-miner`, `cereblix-wallet` (linux-amd64 и windows-amd64.exe)
-+ `cerebra-src.tar.gz` (исходники).
-
-### 10.6. Инструмент деплоя (`tools/srv.py`)
-Python+paramiko хелпер:
-```
-python tools/srv.py run "<команда>"        # выполнить на сервере
-python tools/srv.py put <локальн> <удал>   # загрузить файл/каталог
-python tools/srv.py get <удал> <локальн>   # скачать файл
-```
-Содержит учётку сервера - приватный файл, не публиковать.
+> Antivirus tools often flag unsigned CPU miners as PUA - add an exclusion for
+> the miner file rather than disabling protection.
 
 ---
 
-## 11. Ключи и безопасность
+## 8. Standalone CLI wallet (`cmd/cereblix-wallet`)
 
-- **`KEYS.txt`** (локально) и **`/opt/cereblix/NETWORK_WALLET.txt`** (сервер,
-  chmod 600) - приватные ключи. Кто знает ключ - владеет монетами. Не публиковать.
-- Кошельки:
-  - **Сетевой** (на него майнит seed-нода): `crb110047ab2e7fd8cc04b8484f58a87e29fcb97c857`.
-  - **Локальный тестовый**: `crb1abed37981bcd1786676c0490531e06c760d71712`.
-- Импорт в веб-кошелёк: `/cereblix/wallet/` → «Импортировать ключ» → вставить
-  приватный ключ.
-- HTTPS пока нет (доступ по IP; Let's Encrypt по голому IP сертификат не выдаёт -
-  нужен домен). Поэтому WebCrypto в кошельке заменён на чистый JS.
+A local key store + RPC client + block explorer, independent of the website
+(like `bitcoin-cli` - it needs a node, but keys live only on your machine).
 
----
-
-## 12. Тестирование и проверки
-
-- `go vet ./... && go build ./...` - обязаны проходить.
-- `go test ./neuromorph` - детерминизм VM (эталонный хэш, переиспользование VM,
-  чувствительность к входу) + различие параметров между эпохами; бенчмарк H/s.
-- Проведённый smoke-тест: две ноды синхронизируются и ретаргетят; транзакция
-  проходит и подтверждается; Windows-майнер с внешней машины реально намайнил
-  блоки в прод-сети (~570-685 H/s на 2-4 потоках); баланс и история сходятся.
+- Keys in `~/.cereblix/wallet.json`, optionally passphrase-encrypted with
+  PBKDF2-HMAC-SHA256 + AES-GCM (all standard library).
+- Interactive shell or one-shot commands: `new`, `list`, `balance`, `send`,
+  `receive`, `history`, `import`, `export`, `encrypt`, plus explorer commands
+  `status`, `block`, `tx`, `address`, `richlist`, `mempool`, `search`.
 
 ---
 
-## 13. Эндпоинты и адреса (быстрая справка)
+## 9. Web wallet, site & explorer (`web/`)
 
-| Что                | Адрес                                                |
-|--------------------|------------------------------------------------------|
-| Сайт               | http://188.34.181.191/cereblix/                       |
-| Веб-кошелёк        | http://188.34.181.191/cereblix/wallet/                |
-| API статус         | http://188.34.181.191/cereblix/api/status             |
-| Скачать майнер/ноду| http://188.34.181.191/cereblix/downloads/             |
-| Seed-нода (P2P)    | http://188.34.181.191:18750                          |
-| Исходники          | http://188.34.181.191/cereblix/downloads/cerebra-src.tar.gz |
-
----
-
-## 14. Известные ограничения и осознанные упрощения
-
-Это не баги, а сознательные решения для сети нулевого дня; при росте сети их
-надо пересматривать:
-
-- **Вся цепь и состояние - в RAM.** Блоки держатся срезом в памяти, состояние -
-  map'ой; при реорге `blocks.jsonl` переписывается целиком. Для молодой цепи
-  (годы при пустых блоках - единицы ГБ) это нормально; при серьёзном росте
-  понадобится БД (LevelDB/bbolt) и снапшоты состояния.
-- **Нет coinbase-maturity.** Награда за блок тратится сразу (в Bitcoin - после
-  100 блоков). При глубоком реорге транзакции, опирающиеся на «осиротевшую»
-  награду, откатываются вместе с цепью - для мелкой сети приемлемо.
-- **Реорг = переигрывание от точки форка.** Валидация форка переисполняет все
-  его блоки (PoW заново не считается для уже проверенных хэшей - есть кэш
-  `verifiedPow`). Глубокие реорги дорогие, но редкие.
-- **P2P - HTTP-поллинг раз в 10 с**, а не постоянные соединения/гossip. Простота
-  и отлаживаемость вместо минимальной латентности. Трафик не шифруется: блоки и
-  транзакции - публичные данные, целостность защищена подписями и PoW.
-- **Нет rate-limiting на RPC.** Наружу RPC торчит только через Apache;
-  защита от злоупотреблений - на уровне reverse-proxy.
-- **Внешний майнер доверяет ноде** состав блока (getwork-шаблон строит нода) -
-  та же модель доверия, что у майнинг-пулов.
-- **Один seed-узел** (188.34.181.191) - единая точка отказа для bootstrap'а
-  новых нод; сама цепь при этом есть у каждой ноды локально, и сеть переживёт
-  падение seed'а.
-- **Консенсус заявлен только для amd64** (float-детерминизм). arm64 теоретически
-  совместим (FMA в коде исключён), но в проде не проверялся.
-- **Бинарники не подписаны** - антивирусы могут ругаться на майнер (типично для
-  всех CPU-майнеров); лечится точечным исключением, а в перспективе - подписью.
-- **Лимит размера блока - только по числу транзакций** (200), байтового лимита
-  нет; при 200 простых транзакциях блок ≪ 1 МБ, так что практической угрозы нет.
+- **Web wallet:** static page; keys are generated and **signed in the browser**
+  (ed25519 via tweetnacl). The private key never reaches the server. Addresses
+  are computed with a pure-JS SHA-256 (WebCrypto is unavailable over plain HTTP).
+- **Site:** landing with live network stats, the naming/DNA rationale, mining
+  guide, parameters, FAQ. English/Russian with auto-detect + a manual switch.
+- **Explorer:** blocks, transactions with confirmations, address pages with
+  paginated history, rich list, mempool, and a height/hash/txid/address search.
 
 ---
 
-## 15. Идеи на будущее (не реализовано)
+## 10. Build from source
 
-- Майнинг «только при простое» и/или флаг `-temp-limit` для температуры.
-- Mining-пул (stratum-подобный), explorer с поиском по tx/адресу.
-- Подписанные релизы бинарников (снять срабатывания антивирусов).
-- HTTPS + домен, несколько географически разнесённых seed-нод.
-- Внешний аудит NeuroMorph и криптоэкономики.
+Requires Go 1.21+. Zero external dependencies.
+
+```sh
+git clone https://github.com/Cerebra-CBR/cereblix.git
+cd cereblix
+go build ./...
+
+# cross-compile, e.g. Windows from Linux:
+GOOS=windows GOARCH=amd64 go build -o cereblix-miner.exe ./cmd/cereblix-miner
+```
+
+`go test ./neuromorph` validates VM determinism.
 
 ---
 
-## 16. Дисклеймер
+## 11. Security model
 
-Cereblix - экспериментальное ПО, запущенное за один день, без премайна, фонда,
-биржи, цены и гарантий. NeuroMorph - новый алгоритм, не проходивший многолетнего
-внешнего аудита. У монеты сейчас нет ценности - она появляется только из спроса,
-которого ещё нет и может не возникнуть. Не вкладывайте средства, которые боитесь
-потерять. DYOR.
+- **Keys:** custody is the user's; the web and CLI wallets sign locally and never
+  transmit private keys. CLI wallets can be passphrase-encrypted at rest.
+- **Node:** runs unprivileged and sandboxed; input is size-limited and
+  timeout-bounded; handlers and background goroutines recover from panics.
+- **Consensus:** ed25519 signatures, PoW, account-nonce replay protection, and
+  the 51% mitigations of section 5.
+- **Honest framing:** "unhackable" is not a thing. Security is layered risk
+  reduction. The biggest real risk to a new coin is a 51% attack while hashrate
+  is small, not an ASIC years away.
+
+---
+
+## 12. Known limitations & deliberate trade-offs
+
+- **Chain & state are in RAM**; reorgs rewrite the JSONL store. Fine for a young
+  chain; a serious size would need an on-disk DB and state snapshots.
+- **No coinbase maturity** - rewards are spendable immediately.
+- **No privacy** - the chain is transparent (addresses and amounts are visible).
+  Cereblix does not attempt Monero-style privacy.
+- **P2P is HTTP polling**, not a gossip overlay - simplicity over latency.
+- **64 MiB dataset** forces DRAM on ASICs and commodity CPUs, but fits in the L3
+  of very large server CPUs (raising the size would close that gap at some cost
+  to low-end devices).
+- **Unsigned binaries** - antivirus tools may warn.
+
+---
+
+## 13. Disclaimer
+
+Cereblix is experimental software launched in a single day with zero premine,
+zero fund, zero exchange, zero price and zero guarantees. NeuroMorph is a new
+algorithm without years of external audit. Value, if any, comes only from demand
+that may never appear. Do not invest what you cannot afford to lose. DYOR.
