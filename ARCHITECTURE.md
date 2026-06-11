@@ -4,7 +4,7 @@
 > the blockchain core, the node, miner and wallets.
 >
 > Document version: 2.0 - Network launched 2026-06-11 - Code license: MIT.
-> Status: experimental software. No premine, no fund, no guarantees. DYOR.
+> A free, open-source project. No premine, no fund, no fundraising.
 
 ---
 
@@ -351,9 +351,7 @@ GOOS=windows GOARCH=amd64 go build -o cereblix-miner.exe ./cmd/cereblix-miner
 
 ---
 
-## 13. Disclaimer
+## 13. About
 
-Cereblix is experimental software launched in a single day with zero premine,
-zero fund, zero exchange, zero price and zero guarantees. NeuroMorph is a new
-algorithm without years of external audit. Value, if any, comes only from demand
-that may never appear. Do not invest what you cannot afford to lose. DYOR.
+Cereblix is a free, open-source project with zero premine, zero fund and no
+fundraising. The code is MIT-licensed - mine it, fork it, run your own node.

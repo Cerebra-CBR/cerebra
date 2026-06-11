@@ -7,10 +7,8 @@ proof-of-work algorithm.** No GPU, no ASIC - ever. One CPU, one vote.
 - 💼 Web wallet: http://188.34.181.191/cereblix/wallet/
 - 📖 Full design: [ARCHITECTURE.md](ARCHITECTURE.md)
 
-> ⚗️ Experimental software, launched in a single day with **zero premine, zero
-> fund, zero promises**. NeuroMorph is a new algorithm without years of external
-> audit. The coin has no price - it only gets value from demand that may never
-> appear. Don't invest what you can't lose. DYOR.
+> A free, open-source project with **zero premine, zero fund, no fundraising**.
+> Mine it, fork it, run your own node - the code is all yours.
 
 ---
 

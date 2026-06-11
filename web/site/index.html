@@ -164,7 +164,7 @@ footer{padding:36px 0;color:var(--mut);font-size:14px;border-top:1px solid #1f2b
   </ol>
   <p style="color:var(--mut)" data-i-html="algo_outro">And at every epoch boundary (4096 blocks ≈ 3 days) <b>new VM rules</b> are born from the chain hash. An ASIC shipped today executes a "different" algorithm one epoch later. The only device that doesn't care is a general-purpose processor.</p>
   </div>
-  <div class="warn" data-i-html="algo_warn">⚗️ Honest about the risks: NeuroMorph is a new algorithm with no years of external audit. Cereblix is an experiment launched in a single day, with no fund and no guarantees. Take part out of interest in the technology, not for "moonshots".</div>
+  <div class="warn" data-i-html="algo_warn">🧪 A free, open-source project. Mine it, fork it, run your own node - the code is all yours.</div>
 </section>
 
 <section id="mine">
@@ -218,10 +218,10 @@ cereblix-miner -node http://127.0.0.1:18751/api -addr crb1YOUR_ADDRESS</pre>
 </section>
 
 <footer>
-  <span data-i-html="footer1">Cereblix · launched 11 June 2026 · no premine, no fund, no promises ·</span>
+  <span data-i-html="footer1">Cereblix · launched 11 June 2026 · no premine, no fund · open source ·</span>
   <a href="wallet/" style="color:var(--acc)" data-i="nav_wallet">wallet</a> ·
   <a href="https://github.com/Cerebra-CBR/cereblix" target="_blank" rel="noopener" style="color:var(--acc)">GitHub</a><br>
-  <span data-i="footer2">This is experimental software. Don't invest what you're afraid to lose. DYOR.</span>
+  <span data-i="footer2">A free, open-source project - mine it, fork it, run your own node.</span>
 </footer>
 </div>
 
@@ -250,7 +250,7 @@ const I18N = {
     algo_3:'Прогоняет 32-64 цикла исполнения, вмешивая регистры обратно в память - пропустить работу нельзя.',
     algo_4:'Сворачивает всё в SHA-256 и сравнивает с целью сложности.',
     algo_outro:'А на границе каждой эпохи (4096 блоков ≈ 3 дня) из хэша цепи рождаются <b>новые правила VM</b>. ASIC, выпущенный сегодня, через эпоху исполняет уже «не тот» алгоритм. Единственное устройство, которому всё равно, - универсальный процессор.',
-    algo_warn:'⚗️ Честно о рисках: NeuroMorph - новый алгоритм, он не проходил многолетний внешний аудит. Cereblix - эксперимент, запущенный в один день, без фонда и гарантий. Участвуйте из интереса к технологии, а не ради «иксов».',
+    algo_warn:'🧪 Бесплатный открытый опенсорсный проект. Майнь, форкай, поднимай свою ноду - код полностью твой.',
     mine_h2:'Начать <em>майнить</em>',
     mine_s1_t:"Создайте кошелёк", mine_s1_b:'Откройте <a href="wallet/">веб-кошелёк</a>, нажмите «Создать», сохраните приватный ключ и скопируйте адрес <code>crb1…</code>',
     mine_s2_t:"Скачайте майнер", mine_s2_b:'Свежие сборки - на <a href="https://github.com/Cerebra-CBR/cereblix/releases/latest" target="_blank" rel="noopener">GitHub Releases</a>: <a href="https://github.com/Cerebra-CBR/cereblix/releases/latest/download/cereblix-miner-windows-amd64.exe">Windows x64</a> · <a href="https://github.com/Cerebra-CBR/cereblix/releases/latest/download/cereblix-miner-linux-amd64">Linux x64</a> &nbsp;(Intel и AMD; код открыт - <a href="https://github.com/Cerebra-CBR/cereblix" target="_blank" rel="noopener">github.com/Cerebra-CBR/cereblix</a>)',
@@ -274,8 +274,8 @@ const I18N = {
     faq4_a:"Нет. Кодовая база написана с нуля на Go (ядро + нода + майнер ~2500 строк, ноль внешних зависимостей). NeuroMorph концептуально развивает идею случайных программ RandomX, но добавляет главное: эпохальную мутацию самой семантики VM. RandomX зафиксирован навечно - NeuroMorph не фиксирован в принципе.",
     faq5_q:"Как поддержать сеть?",
     faq5_a:'Майните (даже 1-2 потока - вклад в безопасность), держите ноду, зеркальте исходники. Код открыт: <a href="https://github.com/Cerebra-CBR/cereblix" target="_blank" rel="noopener">github.com/Cerebra-CBR/cereblix</a>.',
-    footer1:"Cereblix · запущена 11 июня 2026 · без премайна, без фонда, без обещаний ·",
-    footer2:"Это экспериментальное ПО. Не вкладывайте то, что боитесь потерять. DYOR.",
+    footer1:"Cereblix · запущена 11 июня 2026 · без премайна, без фонда · открытый код ·",
+    footer2:"Бесплатный открытый опенсорсный проект - майнь, форкай, поднимай свою ноду.",
     name_cere_t:"cereb - от cerebrum (мозг) 🧠",
     name_cere_b:"Думает твой процессор: NeuroMorph гоняет на CPU мозгоподобные случайные программы. Нейроны, синапсы, «мозговые» вычисления - вся суть монеты.",
     name_lix_t:"lix - от helix (спираль ДНК) 🧬",
