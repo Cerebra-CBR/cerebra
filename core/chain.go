@@ -377,7 +377,7 @@ func (c *Chain) validateBlock(prefix []*Block, st State, b *Block) error {
 	// Proof of work.
 	if !c.verifiedPow[b.Hash()] {
 		vm := c.vmFor(prefix, b.Height)
-		pow := vm.Hash(b.HeaderBytes())
+		pow := vm.Hash(b.HeaderBytes(), b.Height)
 		if !HashMeetsTarget(pow, got) {
 			return errors.New("insufficient proof of work")
 		}

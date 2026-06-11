@@ -741,12 +741,13 @@ func (n *Node) mineWorker(id uint64, coinbase string) {
 		}
 		target, _ := tmpl.TargetInt()
 		header := tmpl.HeaderBytes()
+		height := tmpl.Height
 		prevHash := tmpl.PrevHash
 		nonce := id<<56 | uint64(time.Now().UnixNano())&0xFFFFFFFF<<8
 		deadline := time.Now().Add(templateMaxAge)
 		for time.Now().Before(deadline) {
 			putNonce(header, nonce)
-			hash := vm.Hash(header)
+			hash := vm.Hash(header, height)
 			n.hashCount.Add(1)
 			if core.HashMeetsTarget(hash, target) {
 				b := *tmpl

@@ -140,7 +140,7 @@ func mineThread(id uint64) {
 			for b := 0; b < 8; b++ {
 				header[core.NonceOffset+b] = byte(nonce >> (8 * b))
 			}
-			hash := vm.Hash(header)
+			hash := vm.Hash(header, w.Height)
 			hashCount.Add(1)
 			if new(big.Int).SetBytes(hash[:]).Cmp(target) <= 0 {
 				submit(w.ID, nonce, w.Height)

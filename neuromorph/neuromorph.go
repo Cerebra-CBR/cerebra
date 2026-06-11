@@ -20,6 +20,7 @@ import (
 	"encoding/binary"
 	"math"
 	"math/bits"
+	"sync"
 )
 
 const (
@@ -27,6 +28,23 @@ const (
 	scratchWords = ScratchBytes / 8
 	scratchMask  = uint64(ScratchBytes - 8) // 8-byte aligned addressing
 	numOps       = 15
+
+	// Memory-hardness (activated at DatasetHeight). A 64 MiB read-only dataset,
+	// regenerated each epoch from the epoch seed and shared across all threads,
+	// is touched by a chain of data-dependent random reads in every hash. The
+	// address chain depends on the values read, so accesses cannot be
+	// prefetched — the hash is bound to DRAM latency, forcing any ASIC to carry
+	// 64 MiB of real random-access memory (it cannot fit cheap on-die SRAM).
+	DatasetBytes        = 64 << 20 // 64 MiB
+	datasetWords        = DatasetBytes / 8
+	datasetMask         = uint64(DatasetBytes - 8)
+	datasetReadsPerLoop = 64
+
+	// DatasetHeight is the block height at which the dataset turns on. Blocks
+	// below it hash exactly as before (so all pre-activation blocks stay valid);
+	// blocks at/above it must include the memory-hard step. Give nodes/miners
+	// time to update before this height.
+	DatasetHeight = 1000
 )
 
 // Op codes.
@@ -56,6 +74,7 @@ type Params struct {
 	RotSalt    uint64     // per-epoch rotation/xor salt
 	OpTable    [256]uint8 // weighted opcode lookup table
 	AesKey     [16]byte   // per-epoch AES round key
+	DatasetKey [16]byte   // per-epoch key seeding the 64 MiB dataset
 }
 
 // EpochSeed0 is the seed for epoch 0 (before any chain entropy exists).
@@ -73,6 +92,8 @@ func DeriveParams(epochSeed []byte) *Params {
 	p.BranchMask = uint64(0xFF) << (h[3] % 24)                     // 8 condition bits, varying position
 	p.RotSalt = binary.LittleEndian.Uint64(h[4:12])
 	copy(p.AesKey[:], h[12:28])
+	dk := sha256.Sum256(append([]byte("nm-dataset|"), epochSeed...))
+	copy(p.DatasetKey[:], dk[:16])
 
 	// Weighted opcode table: weights 1..8 per op, re-rolled every epoch.
 	wh := sha256.Sum256(append([]byte("nm-weights|"), epochSeed...))
@@ -107,6 +128,40 @@ type instr struct {
 	imm uint32
 }
 
+// datasetCache holds the per-epoch 64 MiB dataset, shared read-only across all
+// VMs/threads of an epoch so memory use is 64 MiB total, not per thread.
+var (
+	dsMu    sync.Mutex
+	dsCache = map[[16]byte][]uint64{}
+)
+
+// getDataset returns the shared 64 MiB dataset for the given epoch key,
+// generating it (AES-CTR keystream) on first use. Deterministic across nodes.
+func getDataset(key [16]byte) []uint64 {
+	dsMu.Lock()
+	defer dsMu.Unlock()
+	if d, ok := dsCache[key]; ok {
+		return d
+	}
+	d := make([]uint64, datasetWords)
+	blk, _ := aes.NewCipher(key[:])
+	var in, out [16]byte
+	for i := 0; i < datasetWords; i += 2 {
+		binary.LittleEndian.PutUint64(in[0:8], uint64(i))
+		blk.Encrypt(out[:], in[:])
+		d[i] = binary.LittleEndian.Uint64(out[0:8])
+		d[i+1] = binary.LittleEndian.Uint64(out[8:16])
+	}
+	if len(dsCache) >= 2 { // keep only the most recent epochs resident
+		for k := range dsCache {
+			delete(dsCache, k)
+			break
+		}
+	}
+	dsCache[key] = d
+	return d
+}
+
 // VM holds reusable buffers so miners can hash without per-hash allocation.
 type VM struct {
 	params  *Params
@@ -114,6 +169,7 @@ type VM struct {
 	scratch []uint64
 	prog    []instr
 	taken   []uint8
+	dataset []uint64 // shared per-epoch 64 MiB dataset; nil until first needed
 }
 
 func NewVM(p *Params) *VM {
@@ -178,11 +234,18 @@ func normFloat(x uint64) float64 {
 	return math.Float64frombits(exp | mant)
 }
 
-// Hash computes the NeuroMorph hash of `header` under epoch params.
-// The header must already contain the nonce being tried.
-func (vm *VM) Hash(header []byte) [32]byte {
+// Hash computes the NeuroMorph hash of `header` at block `height` under epoch
+// params. The header must already contain the nonce being tried. From
+// DatasetHeight onward the memory-hard dataset step is included; below it the
+// computation is byte-identical to v1 so pre-activation blocks stay valid.
+func (vm *VM) Hash(header []byte, height uint64) [32]byte {
 	p := vm.params
 	seed := sha256.Sum256(append([]byte("nm-seed|"), header...))
+
+	useDS := height >= DatasetHeight
+	if useDS && vm.dataset == nil {
+		vm.dataset = getDataset(p.DatasetKey)
+	}
 
 	vm.fillScratch(seed)
 	vm.genProgram(seed)
@@ -273,6 +336,17 @@ func (vm *VM) Hash(header []byte) [32]byte {
 				}
 			}
 			pc++
+		}
+		// Memory-hard step (post-activation): a chain of data-dependent random
+		// reads from the 64 MiB dataset. Each address depends on the previous
+		// read, so the walk is latency-bound and cannot be prefetched.
+		if useDS {
+			addr := (r[1] ^ p.RotSalt) & datasetMask
+			for k := 0; k < datasetReadsPerLoop; k++ {
+				v := vm.dataset[addr>>3]
+				r[k&15] ^= v
+				addr = (v + r[(k+1)&15] + uint64(loop)) & datasetMask
+			}
 		}
 		// Fold registers back into the scratchpad so loops cannot be skipped.
 		base := (r[0] ^ uint64(loop)*0x9E3779B97F4A7C15) & scratchMask >> 3
