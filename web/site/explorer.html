@@ -155,6 +155,10 @@ const loc = () => LANG==='ru'?'ru-RU':'en-US';
 const fmt = v => (v/UNIT).toLocaleString(loc(),{maximumFractionDigits:8}) + ' CRB';
 const tstr = ts => new Date(ts*1000).toLocaleString(loc());
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+// escape a value for safe embedding inside a single-quoted JS string in an inline
+// handler attribute (defense-in-depth: addresses/hashes are node-normalized, but
+// explorer shares an origin with the wallet, so an injection here could read keys)
+const js = s => esc(String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"));
 const short = (s,n=16) => s && s.length > n+4 ? s.slice(0,n)+'…' : s;
 let netHeight = 0;
 
@@ -164,10 +168,10 @@ async function api(path){
   if (j && j.error) throw new Error(j.error);
   return j;
 }
-const aBlock = (h,txt) => `<a onclick="showBlock(${h})">${esc(txt)}</a>`;
-const aTx = (id,txt) => `<a onclick="showTx('${id}')">${esc(txt)}</a>`;
-const aAddr = (ad,txt) => `<a onclick="showAddr('${ad}')">${esc(txt)}</a>`;
-const copy = s => `<span class="copy" onclick="navigator.clipboard.writeText('${s}')">${t('copy')}</span>`;
+const aBlock = (h,txt) => `<a onclick="showBlock(${Number(h)||0})">${esc(txt)}</a>`;
+const aTx = (id,txt) => `<a onclick="showTx('${js(id)}')">${esc(txt)}</a>`;
+const aAddr = (ad,txt) => `<a onclick="showAddr('${js(ad)}')">${esc(txt)}</a>`;
+const copy = s => `<span class="copy" onclick="navigator.clipboard.writeText('${js(s)}')">${t('copy')}</span>`;
 
 async function loadStats(){
   try{

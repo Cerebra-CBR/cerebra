@@ -6,7 +6,7 @@
 <title>Cereblix Wallet - веб-кошелёк CRB</title>
 <meta name="theme-color" content="#06080f">
 <link rel="icon" type="image/svg+xml" href="../favicon.svg">
-<script src="nacl.min.js"></script>
+<script src="nacl.min.js" integrity="sha384-LMUiUHpaYNGZFzWFRjsADnCSqae1Mk5llcUOHOLDhCxkyF2cdsWAueTZAzV+swW/"></script>
 <style>
 @font-face{font-family:'Space Grotesk';font-weight:500;font-display:swap;src:url('../fonts/spacegrotesk-500.woff2') format('woff2')}
 @font-face{font-family:'Space Grotesk';font-weight:700;font-display:swap;src:url('../fonts/spacegrotesk-700.woff2') format('woff2')}
@@ -247,12 +247,26 @@ async function setKeys(secretHex){
   keys = { secretKey: sk, publicKey: kp.publicKey, address: await addrFromPub(kp.publicKey) };
 }
 
+// Refuse to mint a key unless a cryptographically secure RNG is present.
+// crypto.getRandomValues IS available on plain HTTP (unlike crypto.subtle);
+// real TweetNaCl uses it and throws without it - this guards against a tampered
+// or stripped build silently seeding keys from a weak source.
+function assertCSPRNG(){
+  if (!(window.crypto && typeof window.crypto.getRandomValues === 'function'))
+    throw new Error(LANG==='ru'
+      ? 'Нет криптостойкого генератора случайных чисел - отказ в создании ключа. Откройте по HTTPS в современном браузере.'
+      : 'No secure random generator - refusing to create a key. Open over HTTPS in a modern browser.');
+}
+
 async function createWallet(){
-  const kp = nacl.sign.keyPair();
-  $('newKey').textContent = hex(kp.secretKey);
-  $('newKeyBox').classList.remove('hidden');
-  $('importBox').classList.add('hidden');
-  await setKeys(hex(kp.secretKey));
+  try {
+    assertCSPRNG();
+    const kp = nacl.sign.keyPair();
+    $('newKey').textContent = hex(kp.secretKey);
+    $('newKeyBox').classList.remove('hidden');
+    $('importBox').classList.add('hidden');
+    await setKeys(hex(kp.secretKey));
+  } catch(e){ toast(t('err') + ': ' + e.message); }
 }
 
 async function ackKey(){
