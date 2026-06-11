@@ -44,7 +44,7 @@ const (
 	// below it hash exactly as before (so all pre-activation blocks stay valid);
 	// blocks at/above it must include the memory-hard step. Give nodes/miners
 	// time to update before this height.
-	DatasetHeight = 1000
+	DatasetHeight = 240
 )
 
 // Op codes.
