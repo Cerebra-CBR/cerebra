@@ -89,9 +89,10 @@ nav .links a.active{color:var(--acc)}
 .hero p{color:var(--mut);max-width:680px;margin:0 auto 30px;font-size:clamp(15px,2.2vw,19px)}
 /* ---- stats ---- */
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(140px,100%),1fr));gap:13px;margin:42px 0 6px}
-.stat{position:relative;background:var(--glass);border:1px solid var(--border);border-radius:16px;padding:18px 10px;text-align:center;backdrop-filter:blur(8px);overflow:hidden;transition:transform .2s,border-color .2s}
-.stat::before{content:"";position:absolute;top:0;left:0;right:0;height:2px;background:var(--grad);opacity:.75}
+.stat{position:relative;background:var(--glass);border:1px solid var(--border);border-radius:16px;padding:18px 10px;text-align:center;backdrop-filter:blur(8px);transition:transform .2s,border-color .2s}
+.stat::before{content:"";position:absolute;top:0;left:0;right:0;height:2px;background:var(--grad);opacity:.75;border-radius:16px 16px 0 0}
 .stat:hover{transform:translateY(-3px);border-color:var(--border2)}
+.stat:hover,.stat:focus-within{z-index:10}
 .stat b{display:block;font-family:var(--fd);font-size:21px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .stat b.sm{font-size:18px}
 .stat span{color:var(--mut);font-size:12.5px}
