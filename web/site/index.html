@@ -296,6 +296,20 @@ footer{padding:40px 0;color:var(--mut);font-size:14px;border-top:1px solid var(-
 cereblix-miner -node http://127.0.0.1:18751/api -addr crb1YOUR_ADDRESS</pre>
       <span style="color:var(--mut)" data-i-html="mine_s4_b">Your own node = your own vote in the network and independent chain validation. Download: <a href="https://github.com/Cerebra-CBR/cereblix/releases/latest/download/cereblixd-linux-amd64">Linux</a> · <a href="https://github.com/Cerebra-CBR/cereblix/releases/latest/download/cereblixd-windows-amd64.exe">Windows</a> · or build from <a href="https://github.com/Cerebra-CBR/cereblix" target="_blank" rel="noopener">source</a>.</span></div></div>
   </div>
+  <h2 style="margin-top:40px" data-i-html="sp_h">Solo or <em>pool</em>?</h2>
+  <div class="grid" style="margin-bottom:16px">
+    <div class="card">
+      <h3><span class="ico">🎯</span><span data-i="solo_t">Solo</span></h3>
+      <p data-i="solo_b">You mine straight against the network. Find a block and you keep the full 50 CRB - but it's a lottery: on a small CPU you might wait hours or days between wins. Best if you have a big multi-core rig.</p>
+      <pre>cereblix-miner -addr crb1YOUR_ADDRESS</pre>
+    </div>
+    <div class="card">
+      <h3><span class="ico">👥</span><span data-i="pool_t">Pool</span></h3>
+      <p data-i="pool_b">You mine together with everyone else. You earn a steady trickle proportional to your work, and the pool auto-pays your address once you reach 0.05 CRB (1% fee). Best for laptops and ordinary CPUs - far less variance.</p>
+      <pre>cereblix-miner -addr crb1YOUR_ADDRESS -node http://188.34.181.191/cereblix/pool/api</pre>
+    </div>
+  </div>
+  <div class="warn" data-i-html="sp_note">💡 On the pool your miner may log <b>"block found"</b> often - those are <b>shares</b> (proofs of work at an easier target), not full blocks. Your real reward lands as automatic pool payouts to your address. Same miner either way - only the <code>-node</code> changes.</div>
 </section>
 
 <section id="spec">
@@ -373,6 +387,10 @@ const I18N = {
     mine_s2_t:"Скачайте майнер", mine_s2_b:'Свежие сборки - на <a href="https://github.com/Cerebra-CBR/cereblix/releases/latest" target="_blank" rel="noopener">GitHub Releases</a>: <a href="https://github.com/Cerebra-CBR/cereblix/releases/latest/download/cereblix-miner-windows-amd64.exe">Windows x64</a> · <a href="https://github.com/Cerebra-CBR/cereblix/releases/latest/download/cereblix-miner-linux-amd64">Linux x64</a> &nbsp;(Intel и AMD; код открыт - <a href="https://github.com/Cerebra-CBR/cereblix" target="_blank" rel="noopener">github.com/Cerebra-CBR/cereblix</a>)',
     mine_s3_t:"Запустите", mine_s3_b:'По умолчанию используются все ядра; ограничить: <code>-threads 4</code>. Майнер сам подключится к публичной ноде. Нашли блок - 50 CRB упали на адрес. Баланс виден в кошельке через ~минуту.',
     mine_s4_t:"(Необязательно) Поднимите свою ноду", mine_s4_b:'Своя нода = свой голос в сети и независимая проверка цепи. Скачать: <a href="https://github.com/Cerebra-CBR/cereblix/releases/latest/download/cereblixd-linux-amd64">Linux</a> · <a href="https://github.com/Cerebra-CBR/cereblix/releases/latest/download/cereblixd-windows-amd64.exe">Windows</a> · или собрать из <a href="https://github.com/Cerebra-CBR/cereblix" target="_blank" rel="noopener">исходников</a>',
+    sp_h:'Соло или <em>пул</em>?',
+    solo_t:"Соло", solo_b:"Майнишь напрямую против сети. Нашёл блок - забираешь все 50 CRB. Но это лотерея: на слабом CPU между блоками можно ждать часами или днями. Подходит, если у тебя мощный многоядерник.",
+    pool_t:"Пул", pool_b:"Майнишь вместе со всеми. Получаешь стабильный ручеёк пропорционально своей работе, и пул сам платит на твой адрес по достижении 0.05 CRB (комиссия 1%). Лучший вариант для ноутбуков и обычных CPU - намного меньше разброса.",
+    sp_note:'💡 На пуле майнер часто пишет <b>«block found»</b> - это <b>шары</b> (доказательства работы на облегчённой цели), а не полные блоки. Реальная награда приходит автоматическими выплатами пула на твой адрес. Майнер тот же - меняется только <code>-node</code>.',
     spec_h2:'Параметры <em>сети</em>',
     spec_ticker:"Тикер", spec_algo:"Алгоритм", spec_algo_v:"NeuroMorph v1 - самомутирующая PoW-VM, CPU-only",
     spec_time:"Время блока", spec_time_v:"60 секунд, ретаргет каждые 20 блоков",

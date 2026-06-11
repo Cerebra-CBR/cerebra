@@ -33,6 +33,7 @@ var (
 	from                       string
 	powBits                    uint
 	sendMu                     sync.Mutex
+	nextNonce                  uint64 // local nonce counter (covers pending mempool txs)
 	store                      *limitStore
 	chMu                       sync.Mutex
 	challenges                 = map[string]int64{} // challenge -> expiry unix
@@ -215,7 +216,13 @@ func sendCRB(to string, amount uint64) (string, error) {
 	if acc.Balance < amount+fee {
 		return "", fmt.Errorf("faucet is empty right now, try later")
 	}
-	tx := &core.Tx{To: to, Amount: amount, Fee: fee, Nonce: acc.Nonce}
+	// Use the higher of the confirmed nonce and our local counter so back-to-back
+	// sends don't reuse a nonce that's still pending in the mempool.
+	nonce := acc.Nonce
+	if nextNonce > nonce {
+		nonce = nextNonce
+	}
+	tx := &core.Tx{To: to, Amount: amount, Fee: fee, Nonce: nonce}
 	core.SignTxAt(tx, priv, st.Height+1)
 	body, _ := json.Marshal(tx)
 	resp, err := http.Post(nodeAPI+"/tx", "application/json", strings.NewReader(string(body)))
@@ -230,8 +237,13 @@ func sendCRB(to string, amount uint64) (string, error) {
 	}
 	_ = json.Unmarshal(raw, &r)
 	if r.Error != "" {
+		// On a nonce mismatch, resync to the chain's confirmed nonce next time.
+		if strings.Contains(r.Error, "nonce") {
+			nextNonce = 0
+		}
 		return "", fmt.Errorf("rejected: %s", r.Error)
 	}
+	nextNonce = nonce + 1
 	return r.TxID, nil
 }
 
@@ -239,7 +251,11 @@ func sendCRB(to string, amount uint64) (string, error) {
 
 func clientIP(r *http.Request) string {
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return strings.TrimSpace(strings.Split(xff, ",")[0])
+		// Use the LAST hop - the entry our own Apache appended is the real client.
+		// The earlier entries are client-supplied and spoofable (would let an
+		// attacker dodge the per-IP limit).
+		parts := strings.Split(xff, ",")
+		return strings.TrimSpace(parts[len(parts)-1])
 	}
 	host := r.RemoteAddr
 	if i := strings.LastIndex(host, ":"); i >= 0 {
