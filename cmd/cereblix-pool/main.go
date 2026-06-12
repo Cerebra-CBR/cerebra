@@ -62,6 +62,78 @@ var (
 	vmEpoch    uint64 = ^uint64(0)
 )
 
+// Per-miner extranonce: a unique 16-bit tag pinned into the top bits of every
+// nonce a given address mines. Because those bits are part of the hashed header,
+// a valid share is cryptographically bound to one miner — the pool rejects a
+// share whose nonce tag doesn't match the extranonce it issued to that address,
+// so nobody can submit another miner's solution under their own address (and the
+// global nonce dedup no longer collides across miners, since their search spaces
+// are disjoint).
+var (
+	enMu       sync.Mutex
+	enAssigned = map[string]uint64{}
+	enCounter  uint64
+)
+
+func extranonceFor(addr string) uint64 {
+	enMu.Lock()
+	defer enMu.Unlock()
+	if e, ok := enAssigned[addr]; ok {
+		return e
+	}
+	enCounter++
+	e := enCounter & 0xFFFF
+	if enCounter > 0xFFFF {
+		log.Printf("pool: WARNING >65535 distinct miners, extranonce space wrapping")
+	}
+	enAssigned[addr] = e
+	return e
+}
+
+// Rolling log of accepted shares, used to estimate live hashrate (pool-wide and
+// per miner) for the public dashboard.
+type shareEvent struct {
+	t     time.Time
+	miner string
+}
+
+var (
+	shareMu sync.Mutex
+	shareEv []shareEvent
+)
+
+func recordShare(miner string) {
+	now := time.Now()
+	shareMu.Lock()
+	shareEv = append(shareEv, shareEvent{now, miner})
+	cut := now.Add(-10 * time.Minute)
+	i := 0
+	for i < len(shareEv) && shareEv[i].t.Before(cut) {
+		i++
+	}
+	if i > 0 {
+		shareEv = shareEv[i:]
+	}
+	shareMu.Unlock()
+}
+
+// hashesPerShare is the expected number of NeuroMorph hashes per accepted share
+// (2^256 / shareTarget). hashrate = sharesInWindow * hashesPerShare / windowSecs.
+func hashesPerShare() float64 {
+	workMu.Lock()
+	var stgt *big.Int
+	if curWork != nil {
+		stgt = curWork.shareTarget
+	}
+	workMu.Unlock()
+	if stgt == nil || stgt.Sign() <= 0 {
+		return 0
+	}
+	max := new(big.Int).Lsh(big.NewInt(1), 256)
+	hps, _ := new(big.Float).SetInt(new(big.Int).Div(max, stgt)).Float64()
+	return hps
+}
+
 // ------------------------------------------------------------- accounting
 
 type state struct {
@@ -179,11 +251,12 @@ func getworkHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{
-		"id":     wk.nodeID + "|" + addr,
-		"header": hex.EncodeToString(wk.header),
-		"target": core.TargetToHex(wk.shareTarget),
-		"seed":   hex.EncodeToString(wk.seed),
-		"height": wk.height,
+		"id":         wk.nodeID + "|" + addr,
+		"header":     hex.EncodeToString(wk.header),
+		"target":     core.TargetToHex(wk.shareTarget),
+		"seed":       hex.EncodeToString(wk.seed),
+		"height":     wk.height,
+		"extranonce": extranonceFor(addr),
 	})
 }
 
@@ -208,6 +281,13 @@ func submitworkHandler(w http.ResponseWriter, r *http.Request) {
 	nodeID, miner := req.ID[:i], req.ID[i+1:]
 	if !core.ValidAddr(miner) {
 		writeJSON(w, 400, map[string]string{"error": "bad miner addr"})
+		return
+	}
+	// Share-binding: the nonce's top-16-bit tag must equal the extranonce this
+	// address was issued. This makes a solution valid for exactly one miner, so
+	// nobody can claim another miner's share by submitting it under their address.
+	if (req.Nonce>>48)&0xFFFF != extranonceFor(miner) {
+		writeJSON(w, 400, map[string]string{"error": "nonce not bound to your extranonce - update your miner"})
 		return
 	}
 	workMu.Lock()
@@ -238,6 +318,7 @@ func submitworkHandler(w http.ResponseWriter, r *http.Request) {
 	st.Shares[miner]++
 	st.RoundShares++
 	st.mu.Unlock()
+	recordShare(miner)
 
 	block := core.HashMeetsTarget(h, wk.netTarget)
 	if block {
@@ -391,24 +472,62 @@ func crb(v uint64) string { return strconv.FormatFloat(float64(v)/float64(core.C
 // --------------------------------------------------------------------- stats
 
 func statsHandler(w http.ResponseWriter, r *http.Request) {
-	st.mu.Lock()
-	miners := map[string]any{}
-	for m := range st.Shares {
-		miners[m] = map[string]any{"shares": st.Shares[m], "owed": st.Owed[m], "paid": st.Paid[m]}
-	}
-	for m := range st.Owed {
-		if _, ok := miners[m]; !ok {
-			miners[m] = map[string]any{"shares": 0.0, "owed": st.Owed[m], "paid": st.Paid[m]}
+	const window = 5 * time.Minute
+	hps := hashesPerShare()
+	// shares per miner in the last `window`, for live hashrate
+	cut := time.Now().Add(-window)
+	recent := map[string]int{}
+	recentTotal := 0
+	shareMu.Lock()
+	for _, e := range shareEv {
+		if e.t.After(cut) {
+			recent[e.miner]++
+			recentTotal++
 		}
 	}
+	shareMu.Unlock()
+	hashrateOf := func(n int) float64 { return float64(n) * hps / window.Seconds() }
+
+	st.mu.Lock()
+	var totalOwed, totalPaid uint64
+	seen := map[string]bool{}
+	miners := []map[string]any{}
+	add := func(m string) {
+		if seen[m] || m == poolAddr {
+			return
+		}
+		seen[m] = true
+		miners = append(miners, map[string]any{
+			"address":  m,
+			"shares":   st.Shares[m],
+			"owed":     st.Owed[m],
+			"paid":     st.Paid[m],
+			"hashrate": hashrateOf(recent[m]),
+		})
+	}
+	for m := range st.Shares {
+		add(m)
+	}
+	for m := range st.Owed {
+		totalOwed += st.Owed[m]
+		add(m)
+	}
+	for _, p := range st.Paid {
+		totalPaid += p
+	}
 	out := map[string]any{
-		"pool_address":  poolAddr,
-		"fee_permil":    feePermil,
-		"blocks_found":  st.Found,
-		"round_shares":  st.RoundShares,
-		"min_payout":    minPayout,
-		"active_miners": len(st.Shares),
-		"miners":        miners,
+		"pool_address":   poolAddr,
+		"fee_permil":     feePermil,
+		"blocks_found":   st.Found,
+		"round_shares":   st.RoundShares,
+		"min_payout":     minPayout,
+		"active_miners":  len(recent),
+		"pool_hashrate":  hashrateOf(recentTotal),
+		"hashes_per_share": hps,
+		"total_owed":     totalOwed,
+		"total_paid":     totalPaid,
+		"share_window_s": int(window.Seconds()),
+		"miners":         miners,
 	}
 	st.mu.Unlock()
 	writeJSON(w, 200, out)

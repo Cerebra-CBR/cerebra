@@ -217,6 +217,7 @@ footer{padding:40px 0;color:var(--mut);font-size:14px;border-top:1px solid var(-
   <div class="links">
     <a href="./" class="active" data-i="nav_home">Home</a>
     <a href="#mine" data-i="nav_mine">Mine</a>
+    <a href="pool.html" data-i="nav_pool">Pool</a>
     <a href="explorer.html" data-i="nav_explorer">Explorer</a>
     <a href="wallet/" data-i="nav_wallet">Wallet</a>
     <a href="faucet.html" data-i="nav_faucet">Faucet</a>
@@ -357,7 +358,7 @@ cereblix-miner -node http://127.0.0.1:18751/api -addr crb1YOUR_ADDRESS</pre>
     <tr><th data-i="spec_epoch">VM mutation epoch</th><td data-i="spec_epoch_v">4096 blocks (~2.8 days)</td></tr>
     <tr><th data-i="spec_premine">Premine</th><td data-i="spec_premine_v"><b>0</b> - empty genesis</td></tr>
     <tr><th data-i="spec_sig">Signatures / addresses</th><td>ed25519 · crb1 + SHA-256(pubkey)</td></tr>
-    <tr><th data-i="spec_seed">Seed node</th><td><code>http://188.34.181.191:18750</code></td></tr>
+    <tr><th data-i="spec_seed">Seed node</th><td><code>seed.cereblix.com:18750</code></td></tr>
     <tr><th data-i="spec_api">Explorer API</th><td><code>https://cereblix.com/api/status</code></td></tr>
   </table></div>
   <h2 style="margin-top:36px" data-i-html="spec_latest">Latest <em>blocks</em></h2>
@@ -381,13 +382,13 @@ cereblix-miner -node http://127.0.0.1:18751/api -addr crb1YOUR_ADDRESS</pre>
       </ul>
     </div>
     <div class="phase">
-      <div class="ph-head"><span class="ph-num">2</span><span class="ph-title" data-i="rm2_t">Mining for everyone</span><span class="chip doing" data-i="rm_c_doing">In progress</span><span class="ph-prog"><span class="ph-bar"><i style="width:50%"></i></span>3/6</span></div>
+      <div class="ph-head"><span class="ph-num">2</span><span class="ph-title" data-i="rm2_t">Mining for everyone</span><span class="chip doing" data-i="rm_c_doing">In progress</span><span class="ph-prog"><span class="ph-bar"><i style="width:83%"></i></span>5/6</span></div>
       <ul class="tasks">
         <li class="done"><span class="ic">✓</span><span class="tx" data-i="t2_1">Mining pool - steady rewards for small CPUs</span></li>
         <li class="done"><span class="ic">✓</span><span class="tx" data-i="t2_2">Free faucet with proof-of-useful-work captcha</span></li>
         <li class="done"><span class="ic">✓</span><span class="tx" data-i="t2_3">One-command miner install</span></li>
-        <li class="todo"><span class="ic"></span><span class="tx" data-i="t2_4">Domain + HTTPS (cereblix.com)</span></li>
-        <li class="todo"><span class="ic"></span><span class="tx" data-i="t2_5">Public pool dashboard</span></li>
+        <li class="done"><span class="ic">✓</span><span class="tx" data-i="t2_4">Domain + HTTPS (cereblix.com)</span></li>
+        <li class="done"><span class="ic">✓</span><span class="tx" data-i="t2_5">Public pool dashboard with per-miner share binding</span></li>
         <li class="todo"><span class="ic"></span><span class="tx" data-i="t2_6">Grow to many independent miners &amp; nodes</span></li>
       </ul>
     </div>
@@ -491,7 +492,7 @@ cereblix-miner -node http://127.0.0.1:18751/api -addr crb1YOUR_ADDRESS</pre>
 const I18N = {
   en: {},  // English is the source text in the HTML; en = identity
   ru: {
-    nav_home:"Главная", nav_mine:"Майнинг", nav_explorer:"Обозреватель", nav_wallet:"Кошелёк", nav_faucet:"Кран", nav_roadmap:"Дорожная карта",
+    nav_home:"Главная", nav_mine:"Майнинг", nav_pool:"Пул", nav_explorer:"Обозреватель", nav_wallet:"Кошелёк", nav_faucet:"Кран", nav_roadmap:"Дорожная карта",
     rm_h2:'Дорожная <em>карта</em>',
     rm_intro:"Открыто и честно - что уже сделано (✓) и что впереди (○). Без дат и обещаний цены: ликвидность и листинги придут по мере реального спроса и комьюнити, а не хайпа.",
     hz1:"Горизонт 1 — Запуск", hz1s:"уже в эфире",
@@ -512,7 +513,7 @@ const I18N = {
     t2_2:"Бесплатный кран с капчёй на полезном PoW",
     t2_3:"Установка майнера одной командой",
     t2_4:"Домен + HTTPS (cereblix.com)",
-    t2_5:"Публичный дашборд пула",
+    t2_5:"Публичный дашборд пула + привязка шар к майнеру",
     t2_6:"Рост до множества независимых майнеров и нод",
     rm3_t:"Доверие и сообщество",
     t3_1:"Публичный анонс запуска (Bitcointalk, форумы)",

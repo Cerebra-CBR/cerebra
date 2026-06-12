@@ -29,6 +29,11 @@ type work struct {
 	Seed   string `json:"seed"`
 	Epoch  uint64 `json:"epoch"`
 	Height uint64 `json:"height"`
+	// Extranonce is a per-miner tag a POOL assigns (0 for solo mining straight
+	// against a node). The miner pins it into the top 16 bits of every nonce it
+	// tries, so a share is cryptographically bound to this miner and the pool
+	// cannot be tricked into crediting one miner's work to another. See mineThread.
+	Extranonce uint64 `json:"extranonce"`
 }
 
 var (
@@ -40,7 +45,7 @@ var (
 )
 
 func main() {
-	flag.StringVar(&nodeURL, "node", "http://188.34.181.191/cereblix/api", "node RPC base URL")
+	flag.StringVar(&nodeURL, "node", "https://cereblix.com/api", "node RPC base URL")
 	flag.StringVar(&addr, "addr", "", "your CRB address (rewards go here)")
 	threads := flag.Int("threads", runtime.NumCPU(), "mining threads")
 	flag.Parse()
@@ -55,7 +60,7 @@ func main() {
 		if addr != "" {
 			fmt.Println("Invalid address. It must look like: crb1 + 40 hex chars.")
 		}
-		fmt.Println("No wallet yet? Create one at http://188.34.181.191/cereblix/wallet/")
+		fmt.Println("No wallet yet? Create one at https://cereblix.com/wallet/")
 		fmt.Print("Enter your CRB address (crb1...): ")
 		line, err := stdin.ReadString('\n')
 		if err != nil {
@@ -135,8 +140,17 @@ func mineThread(id uint64) {
 		targetRaw, _ := hex.DecodeString(w.Target)
 		target := new(big.Int).SetBytes(targetRaw)
 
-		nonce := id<<56 | (uint64(time.Now().UnixNano()) & 0x00FFFFFFFFFFFF)
+		// Nonce layout: [extranonce:16][thread:8][counter:40]. The pool-assigned
+		// extranonce occupies the top 16 bits and stays FIXED, so every share this
+		// miner produces is bound to its identity (the pool rejects a nonce whose
+		// top bits don't match the extranonce it handed this address). Solo mining
+		// gets extranonce 0, which reproduces ordinary per-thread nonce search.
+		const enShift, threadShift = 48, 40
+		const counterMask = (uint64(1) << threadShift) - 1
+		base := (w.Extranonce&0xFFFF)<<enShift | (id&0xFF)<<threadShift
+		ctr := uint64(time.Now().UnixNano()) & counterMask
 		for i := 0; ; i++ {
+			nonce := base | (ctr & counterMask)
 			for b := 0; b < 8; b++ {
 				header[core.NonceOffset+b] = byte(nonce >> (8 * b))
 			}
@@ -147,7 +161,7 @@ func mineThread(id uint64) {
 				fetchWork()
 				break
 			}
-			nonce++
+			ctr++
 			if i%32 == 0 && current.Load() != w {
 				break // new work arrived
 			}

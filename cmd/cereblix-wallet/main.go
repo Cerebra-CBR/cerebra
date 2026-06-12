@@ -303,7 +303,7 @@ func ask(prompt string) string {
 // --------------------------------------------------------------------- main
 
 func main() {
-	flag.StringVar(&nodeURL, "node", "http://188.34.181.191/cereblix/api", "node RPC base URL")
+	flag.StringVar(&nodeURL, "node", "https://cereblix.com/api", "node RPC base URL")
 	flag.StringVar(&walletPath, "wallet", "", "wallet file path (default ~/.cereblix/wallet.json)")
 	flag.Parse()
 	if walletPath == "" {

@@ -16,7 +16,7 @@ func main() {
 		datadir  = flag.String("datadir", "cereblix-data", "data directory")
 		p2pAddr  = flag.String("p2p", ":18750", "p2p listen address")
 		rpcAddr  = flag.String("rpc", "127.0.0.1:18751", "rpc listen address")
-		peers    = flag.String("peers", "http://188.34.181.191:18750", "comma-separated seed peer URLs")
+		peers    = flag.String("peers", "http://seed.cereblix.com:18750", "comma-separated seed peer URLs")
 		public   = flag.String("public", "", "publicly reachable URL of this node (advertised to peers)")
 		mine     = flag.Bool("mine", false, "enable built-in miner")
 		threads  = flag.Int("threads", 2, "miner threads")

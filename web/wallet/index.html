@@ -77,6 +77,7 @@ th{color:var(--mut);font-weight:600}
   <div class="links">
     <a href="../" data-i="nav_home">Home</a>
     <a href="../#mine" data-i="nav_mine">Mine</a>
+    <a href="../pool.html" data-i="nav_pool">Pool</a>
     <a href="../explorer.html" data-i="nav_explorer">Explorer</a>
     <a href="./" class="active" data-i="nav_wallet">Wallet</a>
     <a href="../faucet.html" data-i="nav_faucet">Faucet</a>
@@ -164,7 +165,7 @@ const L = {
     net:(s)=>`height <b>${s.height}</b> · epoch ${s.epoch} · network hashrate ~<b>${Math.round(s.hashrate)}</b> H/s · supply ${fmt(s.supply)} CRB · reward ${fmt(s.reward)} CRB · mempool ${s.mempool}`,
     node_down:"node unavailable: ",bad_to:"invalid recipient address",bad_amount:"invalid amount",
     sent:(id)=>`Sent! TX ${id}… - will be in the next block`},
-  ru:{nav_home:"Главная",nav_mine:"Майнинг",nav_explorer:"Обозреватель",nav_wallet:"Кошелёк",nav_faucet:"Кран",nav_roadmap:"Дорожная карта",about:"о проекте",wallet:"Кошелёк",setup_p:"Ключи создаются и хранятся <b>только в вашем браузере</b>. Сервер никогда не видит приватный ключ - подпись транзакций происходит локально (ed25519).",
+  ru:{nav_home:"Главная",nav_mine:"Майнинг",nav_pool:"Пул",nav_explorer:"Обозреватель",nav_wallet:"Кошелёк",nav_faucet:"Кран",nav_roadmap:"Дорожная карта",about:"о проекте",wallet:"Кошелёк",setup_p:"Ключи создаются и хранятся <b>только в вашем браузере</b>. Сервер никогда не видит приватный ключ - подпись транзакций происходит локально (ed25519).",
     create:"Создать новый кошелёк",import:"Импортировать ключ",import_ph:"Приватный ключ (128 hex-символов)",import_btn:"Импортировать",
     newkey_warn:"⚠️ Сохраните приватный ключ в надёжном месте. Это <b>единственный</b> способ восстановить кошелёк. Потеряете ключ - потеряете монеты.",
     saved_btn:"Я сохранил ключ - продолжить",balance:"Баланс",your_addr:"Ваш адрес (нажмите, чтобы скопировать):",show_key:"показать приватный ключ",logout:"выйти",

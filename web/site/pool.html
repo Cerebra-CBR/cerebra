@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cereblix Pool - live mining dashboard</title>
+<meta name="theme-color" content="#06080f">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<style>
+@font-face{font-family:'Space Grotesk';font-weight:500;font-display:swap;src:url('fonts/spacegrotesk-500.woff2') format('woff2')}
+@font-face{font-family:'Space Grotesk';font-weight:700;font-display:swap;src:url('fonts/spacegrotesk-700.woff2') format('woff2')}
+@font-face{font-family:'Inter';font-weight:400;font-display:swap;src:url('fonts/inter-400.woff2') format('woff2')}
+@font-face{font-family:'Inter';font-weight:500;font-display:swap;src:url('fonts/inter-500.woff2') format('woff2')}
+@font-face{font-family:'Inter';font-weight:700;font-display:swap;src:url('fonts/inter-700.woff2') format('woff2')}
+:root{--bg:#06080f;--glass:rgba(146,180,255,.05);--border:rgba(146,180,255,.13);--border2:rgba(120,200,255,.35);--acc:#22d3ee;--acc2:#a78bfa;--txt:#e8ecf6;--mut:#90a0bd;--ok:#34d399;--err:#f87171;--fd:'Space Grotesk',system-ui,sans-serif;--grad:linear-gradient(115deg,var(--acc),var(--acc2))}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--txt);font:16px/1.6 'Inter',system-ui,Segoe UI,Roboto,sans-serif;overflow-x:hidden;-webkit-font-smoothing:antialiased}
+html{overflow-x:hidden}
+::selection{background:rgba(34,211,238,.28)}
+.bg{position:fixed;inset:0;z-index:-2;overflow:hidden;background:radial-gradient(1100px 680px at 50% -12%,#13234a 0%,transparent 60%),radial-gradient(760px 520px at 100% -4%,#1c1440 0%,transparent 55%),var(--bg)}
+.aurora{position:absolute;border-radius:50%;filter:blur(90px);opacity:.45}
+.aurora.a1{width:460px;height:460px;background:radial-gradient(circle,#22d3ee,transparent 64%);top:-160px;left:-90px;animation:dr1 24s ease-in-out infinite}
+.aurora.a2{width:430px;height:430px;background:radial-gradient(circle,#a78bfa,transparent 64%);top:-120px;right:-110px;animation:dr2 28s ease-in-out infinite}
+@keyframes dr1{50%{transform:translate(50px,40px) scale(1.1)}}@keyframes dr2{50%{transform:translate(-45px,50px) scale(1.06)}}
+@media(prefers-reduced-motion:reduce){.aurora{animation:none}}
+.wrap{max-width:920px;margin:0 auto;padding:0 16px 60px}
+.logo{flex:0 0 auto;display:block}
+nav{display:flex;align-items:center;gap:14px;padding:14px 0;flex-wrap:wrap}
+nav .brand{display:flex;align-items:center;gap:11px;text-decoration:none;color:var(--txt)}
+nav .brand .logo{width:34px;height:34px;filter:drop-shadow(0 4px 13px rgba(34,211,238,.4))}
+nav .brand b{font-family:var(--fd);font-size:20px;font-weight:700;letter-spacing:-.01em}
+nav .brand b i{font-style:normal;color:var(--acc2)}
+nav .links{margin-left:auto;display:flex;gap:16px;flex-wrap:wrap;align-items:center}
+nav .links a{color:var(--mut);text-decoration:none;font-size:14.5px;font-weight:500;white-space:nowrap}
+nav .links a:hover,nav .links a.active{color:var(--acc)}
+@media(max-width:620px){nav .links{margin-left:0;width:100%;gap:15px;overflow-x:auto}}
+.langsw{display:inline-flex;gap:2px;border:1px solid var(--border);border-radius:9px;overflow:hidden;background:var(--glass)}
+.langsw button{background:transparent;color:var(--mut);border:0;padding:5px 10px;cursor:pointer;font-size:13px;font-weight:600;font-family:inherit}
+.langsw button.on{background:var(--grad);color:#06121f}
+h1{font-family:var(--fd);font-size:clamp(24px,5vw,32px);font-weight:700;letter-spacing:-.02em;margin:14px 0 6px}h1 em{font-style:normal;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.sub{color:var(--mut);margin-bottom:20px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:18px}
+.stat{background:var(--glass);border:1px solid var(--border);border-radius:15px;padding:16px 18px;backdrop-filter:blur(8px)}
+.stat .k{font-size:12.5px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
+.stat .v{font-family:var(--fd);font-size:23px;font-weight:700;margin-top:4px;letter-spacing:-.01em}
+.stat .v small{font-size:13px;color:var(--mut);font-weight:500}
+.card{background:var(--glass);border:1px solid var(--border);border-radius:18px;padding:22px;margin-bottom:16px;backdrop-filter:blur(8px)}
+.card h2{font-family:var(--fd);font-size:18px;font-weight:700;margin-bottom:12px}
+pre{background:#0b1120;border:1px solid var(--border);border-radius:11px;padding:13px 15px;overflow-x:auto;font:13.5px ui-monospace,Consolas,monospace;color:#cbd5e1}
+label{font-size:13.5px;color:var(--mut)}
+input{width:100%;background:#0b1120;border:1px solid var(--border);border-radius:11px;color:var(--txt);padding:12px 13px;font-size:15px;margin:6px 0 4px;font-family:ui-monospace,Consolas,monospace}
+input:focus{outline:none;border-color:var(--acc)}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--border)}
+th{color:var(--mut);font-weight:600;font-size:12.5px;text-transform:uppercase;letter-spacing:.03em}
+td.mono,th.num,td.num{font-family:ui-monospace,Consolas,monospace}
+td.num,th.num{text-align:right}
+tr.me{background:linear-gradient(135deg,rgba(167,139,250,.14),rgba(34,211,238,.07))}
+.addr{font-family:ui-monospace,Consolas,monospace;font-size:13px}
+.note{background:linear-gradient(135deg,rgba(167,139,250,.12),rgba(34,211,238,.06));border:1px solid var(--border2);border-radius:12px;padding:12px 16px;font-size:13.5px;color:#cbd5e1;margin-top:6px}
+.tag{display:inline-block;background:rgba(52,211,153,.14);border:1px solid rgba(52,211,153,.4);color:#a7f3d0;border-radius:7px;font-size:11.5px;padding:2px 8px;font-weight:600;margin-left:8px;vertical-align:middle}
+a{color:var(--acc)}
+.muted{color:var(--mut)}
+.empty{color:var(--mut);padding:14px 4px}
+</style>
+</head>
+<body>
+<div class="bg" aria-hidden="true"><div class="aurora a1"></div><div class="aurora a2"></div></div>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse"><stop stop-color="#22d3ee"/><stop offset="1" stop-color="#a78bfa"/></linearGradient></defs></svg>
+<div class="wrap">
+<nav>
+  <a class="brand" href="./"><svg class="logo" viewBox="0 0 40 40" fill="none" aria-hidden="true"><rect x="2" y="2" width="36" height="36" rx="11" fill="url(#lg)"/><path d="M14 8C27 13 27 16 20 20 13 24 13 27 26 32" stroke="#06121f" stroke-width="2.3" stroke-linecap="round"/><path d="M26 8C13 13 13 16 20 20 27 24 27 27 14 32" stroke="#06121f" stroke-width="2.3" stroke-linecap="round"/></svg><b>Cereb<i>lix</i></b></a>
+  <div class="links">
+    <a href="./" data-i="home">Home</a>
+    <a href="./#mine" data-i="mine">Mine</a>
+    <a href="pool.html" class="active" data-i="pool">Pool</a>
+    <a href="explorer.html" data-i="explorer">Explorer</a>
+    <a href="wallet/" data-i="wallet">Wallet</a>
+    <a href="faucet.html" data-i="faucet">Faucet</a>
+    <a href="./#roadmap" data-i="roadmap">Roadmap</a>
+    <a href="https://github.com/Cerebra-CBR/cereblix" target="_blank" rel="noopener">GitHub</a>
+    <span class="langsw"><button data-lang="en" onclick="setLang('en')">EN</button><button data-lang="ru" onclick="setLang('ru')">RU</button></span>
+  </div>
+</nav>
+
+<h1 data-i-html="title">Mining <em>pool</em> <span id="live" class="tag" style="display:none">● LIVE</span></h1>
+<div class="sub" data-i="sub">Steady, low-variance rewards: the pool pays you proportionally to the work you submit, even when network difficulty is high. Point the stock miner at it - nothing else to install.</div>
+
+<div class="grid" id="stats"></div>
+
+<div class="card">
+  <h2 data-i="how_t">Mine on the pool</h2>
+  <pre id="cmd">cereblix-miner -addr crb1YOURADDRESS -node https://cereblix.com/pool/api</pre>
+  <div class="note" data-i-html="how_n">Your miner logs frequent "block found" - those are <b>shares</b>, not real blocks. Rewards arrive automatically once your balance crosses the minimum payout. Each share is <b>cryptographically bound to your address</b> (per-miner extranonce), so no one can claim your work.</div>
+</div>
+
+<div class="card">
+  <h2 data-i="you_t">Your stats</h2>
+  <label data-i="you_l">Your CRB address</label>
+  <input id="addr" placeholder="crb1..." autocomplete="off" oninput="render()">
+  <div id="you" class="muted" style="font-size:14px;margin-top:8px" data-i="you_hint">Enter your address to highlight your row below.</div>
+</div>
+
+<div class="card">
+  <h2 data-i="miners_t">Miners</h2>
+  <div id="minerbox"><div class="empty" data-i="loading">Loading…</div></div>
+</div>
+
+<div class="sub" style="text-align:center;font-size:13px" data-i-html="foot">Pool wallet: <span id="pooladdr" class="addr"></span> · auto-refreshes every 10s</div>
+</div>
+
+<script>
+const I = { en:{}, ru:{
+  home:"Главная", mine:"Майнинг", pool:"Пул", explorer:"Обозреватель", wallet:"Кошелёк", faucet:"Кран", roadmap:"Дорожная карта",
+  title:'Майнинг-<em>пул</em>',
+  sub:"Стабильные выплаты с низкой дисперсией: пул платит пропорционально присланной работе, даже когда сложность сети высокая. Просто направь обычный майнер на него - ничего ставить не нужно.",
+  how_t:"Майнить на пуле",
+  how_n:'Майнер часто пишет "block found" - это <b>шары</b>, а не настоящие блоки. Выплаты приходят автоматически, когда баланс превысит минимум. Каждая шара <b>криптографически привязана к твоему адресу</b> (extranonce на майнера), поэтому чужой твою работу не присвоит.',
+  you_t:"Твоя статистика", you_l:"Твой адрес CRB", you_hint:"Введи адрес, чтобы подсветить свою строку ниже.",
+  miners_t:"Майнеры", loading:"Загрузка…",
+  foot:'Кошелёк пула: <span id="pooladdr" class="addr"></span> · обновление каждые 10с',
+  k_pool_hr:"Хешрейт пула", k_net_hr:"Хешрейт сети", k_blocks:"Блоков найдено", k_miners:"Активных майнеров",
+  k_fee:"Комиссия пула", k_paid:"Всего выплачено", k_owed:"К выплате", k_minpay:"Мин. выплата",
+  c_addr:"Адрес", c_hr:"Хешрейт", c_shares:"Шары (раунд)", c_owed:"К выплате", c_paid:"Выплачено",
+  none:"Пока нет активных майнеров - стань первым.", you_row:"это ты"
+}};
+const EN={};
+function detect(){const s=localStorage.getItem('lang');return (s==='ru'||s==='en')?s:((navigator.language||'en').toLowerCase().startsWith('ru')?'ru':'en');}
+let LANG=detect();
+function applyLang(l){LANG=l;document.documentElement.lang=l;
+  document.querySelectorAll('[data-i],[data-i-html]').forEach(el=>{const k=el.getAttribute('data-i')||el.getAttribute('data-i-html');if(!(k in EN))EN[k]=el.innerHTML;el.innerHTML=l==='en'?EN[k]:(I.ru[k]??EN[k]);});
+  document.querySelectorAll('.langsw button').forEach(b=>b.classList.toggle('on',b.dataset.lang===l));
+  render();}
+function setLang(l){localStorage.setItem('lang',l);applyLang(l);}
+const t=k=>LANG==='en'?(EN[k]??k):(I.ru[k]??EN[k]??k);
+
+const POOL='pool/api', NODE='api';
+const $=id=>document.getElementById(id);
+const U=1e8;
+function fmtHR(h){h=+h||0; if(h>=1e9)return (h/1e9).toFixed(2)+' GH/s'; if(h>=1e6)return (h/1e6).toFixed(2)+' MH/s'; if(h>=1e3)return (h/1e3).toFixed(2)+' kH/s'; return h.toFixed(0)+' H/s';}
+function fmtCRB(v){return ((+v||0)/U).toLocaleString(undefined,{maximumFractionDigits:4})+' CRB';}
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function shortAddr(a){return a.slice(0,10)+'…'+a.slice(-6);}
+
+let LAST=null, NET=null;
+async function poll(){
+  try{
+    const [s,n]=await Promise.all([
+      fetch(POOL+'/poolstats',{cache:'no-store'}).then(r=>r.json()),
+      fetch(NODE+'/status',{cache:'no-store'}).then(r=>r.json()).catch(()=>null)
+    ]);
+    LAST=s; NET=n; $('live').style.display='inline-block';
+    render();
+  }catch(e){ /* keep last good render */ }
+}
+function render(){
+  const s=LAST; if(!s){return;}
+  const fee=(s.fee_permil/10).toFixed(1);
+  const tiles=[
+    ['k_pool_hr', fmtHR(s.pool_hashrate)],
+    ['k_net_hr', NET&&NET.hashrate!=null? fmtHR(NET.hashrate):'—'],
+    ['k_blocks', String(s.blocks_found)],
+    ['k_miners', String(s.active_miners)],
+    ['k_fee', fee+'<small>%</small>'],
+    ['k_paid', fmtCRB(s.total_paid)],
+    ['k_owed', fmtCRB(s.total_owed)],
+    ['k_minpay', fmtCRB(s.min_payout)]
+  ];
+  $('stats').innerHTML=tiles.map(([k,v])=>`<div class="stat"><div class="k">${esc(t(k))}</div><div class="v">${v}</div></div>`).join('');
+  $('pooladdr').textContent=s.pool_address||'';
+  $('cmd').textContent='cereblix-miner -addr '+( ($('addr').value.trim().match(/^crb1[0-9a-f]{40}$/)? $('addr').value.trim():'crb1YOURADDRESS') )+' -node https://cereblix.com/pool/api';
+
+  const me=$('addr').value.trim().toLowerCase();
+  const miners=(s.miners||[]).slice().sort((a,b)=>(b.hashrate-a.hashrate)||(b.shares-a.shares));
+  if(!miners.length){ $('minerbox').innerHTML='<div class="empty">'+esc(t('none'))+'</div>'; }
+  else{
+    const rows=miners.map(m=>{
+      const mine=m.address.toLowerCase()===me;
+      return `<tr class="${mine?'me':''}"><td class="addr">${esc(shortAddr(m.address))}${mine?' <span class="tag">'+esc(t('you_row'))+'</span>':''}</td>`
+        +`<td class="num">${fmtHR(m.hashrate)}</td><td class="num">${(+m.shares||0).toFixed(0)}</td>`
+        +`<td class="num">${fmtCRB(m.owed)}</td><td class="num">${fmtCRB(m.paid)}</td></tr>`;
+    }).join('');
+    $('minerbox').innerHTML=`<table><thead><tr><th>${esc(t('c_addr'))}</th><th class="num">${esc(t('c_hr'))}</th><th class="num">${esc(t('c_shares'))}</th><th class="num">${esc(t('c_owed'))}</th><th class="num">${esc(t('c_paid'))}</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+  // "your stats" line
+  const mine=(s.miners||[]).find(m=>m.address.toLowerCase()===me);
+  if(/^crb1[0-9a-f]{40}$/.test(me)){
+    $('you').innerHTML = mine
+      ? `${esc(t('c_hr'))}: <b>${fmtHR(mine.hashrate)}</b> · ${esc(t('c_owed'))}: <b>${fmtCRB(mine.owed)}</b> · ${esc(t('c_paid'))}: <b>${fmtCRB(mine.paid)}</b>`
+      : (LANG==='ru'?'Этот адрес ещё не присылал шар на пул.':'No shares from this address on the pool yet.');
+  } else { $('you').innerHTML = t('you_hint'); }
+}
+applyLang(LANG);
+poll();
+setInterval(poll,10000);
+</script>
+</body>
+</html>
