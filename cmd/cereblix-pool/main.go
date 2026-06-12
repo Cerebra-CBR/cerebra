@@ -11,6 +11,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
@@ -206,7 +207,11 @@ func refreshWork() (*work, error) {
 	if shareT.Cmp(core.MaxTarget) > 0 {
 		shareT = new(big.Int).Set(core.MaxTarget)
 	}
-	if curWork == nil || curWork.nodeID != gw.ID {
+	// Rebuild on a new tip OR any header change (e.g. the node rebuilt its
+	// template with a fresh Time after a restart). Serving a stale header would
+	// make miners hash bytes the node no longer validates against, so every block
+	// they find gets rejected as "insufficient proof of work" - wasting real work.
+	if curWork == nil || curWork.nodeID != gw.ID || !bytes.Equal(curWork.header, header) {
 		curWork = &work{nodeID: gw.ID, header: header, seed: seed, height: gw.Height,
 			netTarget: netT, shareTarget: shareT, seen: map[uint64]bool{}}
 	}

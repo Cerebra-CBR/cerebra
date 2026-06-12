@@ -944,7 +944,13 @@ func (n *Node) getTemplate(addr string) (*core.Block, error) {
 	id := n.Chain.Tip().Hash() + "|" + addr
 	n.tmplMu.Lock()
 	defer n.tmplMu.Unlock()
-	if t, ok := n.templates[id]; ok && time.Since(time.Unix(int64(t.Time), 0)) < templateMaxAge {
+	// Serve a STABLE template per tip: once built for this tip, reuse it unchanged
+	// until a new block arrives (new tip -> new id below). Rebuilding with a fresh
+	// Time while the tip is unchanged desyncs pool miners - they cache the header
+	// and submit a nonce computed for the OLD Time, which the node would then
+	// reject as "insufficient proof of work", throwing away real work. A frozen
+	// Time stays valid on an unchanged tip (always < now+300 and > median-time-past).
+	if t, ok := n.templates[id]; ok {
 		return t, nil
 	}
 	tmpl, err := n.Chain.BuildTemplate(addr)
