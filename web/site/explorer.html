@@ -276,8 +276,10 @@ async function showAddr(addr){
   try{
     const b = await api('/balance?addr='+addr);
     const hist = await api('/history?addr='+addr+'&limit=200').catch(()=>[]);
-    let recv=0, sent=0, mined=0;
-    (hist||[]).forEach(h=>{ if(h.from===addr) sent+=h.amount+h.fee; else { recv+=h.amount; if(h.from==='coinbase') mined+=h.amount; } });
+    // Lifetime totals come from the node (full-chain scan); the 200-tx history
+    // is only the recent window shown below and must not be summed for totals.
+    const recv = b.received||0, sent = b.sent||0, mined = b.mined||0;
+    const ntx = b.txn!=null ? b.txn : (hist||[]).length;
     addrState = {addr, page:0, hist:hist||[]};
     $('view').innerHTML = `<a class="back" onclick="showHome()">${t('backblocks')}</a>
       <div class="card"><h2>${t('address')}</h2><div class="kv">
@@ -285,7 +287,7 @@ async function showAddr(addr){
         <div>${t('balance')}</div><div class="big">${fmt(b.balance)}</div>
         <div>${t('received')}</div><div>${fmt(recv)} <span class="muted">(${t('mined')} ${fmt(mined)})</span></div>
         <div>${t('sent')}</div><div>${fmt(sent)}</div>
-        <div>${t('ntx')}</div><div>${(hist||[]).length}${(hist||[]).length>=200?'+':''}</div>
+        <div>${t('ntx')}</div><div>${ntx}</div>
         <div>${t('nonce2')}</div><div>${b.nonce}</div>
       </div></div>
       <div class="card"><h2>${t('txhist')}</h2><div id="histbox"></div></div>`;

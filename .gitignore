@@ -4,28 +4,21 @@ KEYS.txt
 NETWORK_WALLET.txt
 *.pat
 *.token
-# tools/srv.py contains the deploy server root password
-tools/srv.py
 # OPERATIONS.md is the private runbook (server, deploy, keys) - never publish
 OPERATIONS.md
-# local-only operational scripts: embed secrets (TG bot token, a test private
-# key) or reference private server internals - never publish
-tools/tg-send.sh
-tools/tg-post.sh
-tools/test-freefee.py
-tools/whoip.sh
-tools/whomines.sh
-tools/whonow.sh
-tools/audit.sh
-tools/fw.sh
-tools/caption.txt
-tools/recover-keys.sh
-tools/derive-addr.py
-tools/genauth.sh
-tools/srv-nodes.py
-tools/checktmp.sh
-tools/findwallet.sh
-tools/hunt-wallet.sh
+# tools/ holds local operational scripts; MANY embed server creds, private keys,
+# the authority key, or the deploy password (srv.py). Ignore the whole directory
+# by default so a stray `git add -A` can never leak one, and explicitly re-include
+# only the safe, public dev helpers below.
+tools/*
+!tools/getfonts.sh
+!tools/shot.js
+!tools/shot3.js
+!tools/shot4.js
+!tools/test-sha.js
+!tools/wallet-test.sh
+!tools/wasm-smoke.js
+!tools/xplatform-test.sh
 logo/
 
 # Wallets & chain data
