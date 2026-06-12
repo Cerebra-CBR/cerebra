@@ -3,8 +3,12 @@
 > Complete technical specification of Cereblix: the NeuroMorph proof-of-work,
 > the blockchain core, the node, miner and wallets.
 >
-> Document version: 2.0 - Network launched 2026-06-11 - Code license: MIT.
+> Document version: 3.0 - Network launched 2026-06-11 - Code license: MIT.
 > A free, open-source project. No premine, no fund, no fundraising.
+>
+> v3 adds: mining pool, free faucet with a proof-of-useful-work captcha,
+> coinbase maturity, a height-activated minimum fee, chain-id replay protection,
+> and authority checkpoints for the bootstrap phase.
 
 ---
 
@@ -49,14 +53,15 @@ Motto: **one CPU = one vote.**
 
 ```
 neuromorph/   NeuroMorph PoW virtual machine + 64 MiB dataset
-core/         chain, account state, mempool, consensus rules
+core/         chain, account state, mempool, consensus rules, checkpoints
 node/         P2P sync, JSON RPC, getwork/submitwork, built-in miner
-cmd/          cereblixd (node), cereblix-miner, cereblix-wallet
-web/          project site, block explorer, web wallet
+cmd/          cereblixd (node) · cereblix-miner · cereblix-wallet ·
+              cereblix-pool · cereblix-faucet · cereblix-checkpoint · cereblix-wasm
+web/          project site, block explorer, web wallet, browser miner
 deploy/       systemd unit template
 ```
 
-Core (core + neuromorph + node + cmd) is ~2700 lines of Go.
+Everything is pure-Go standard library, zero external dependencies.
 
 ---
 
@@ -190,7 +195,13 @@ slower than a laptop.
 - Account/nonce model (not UTXO): each account has a balance and a monotonic
   nonce; replay protection is via the nonce.
 - Signing payload: `cerebra-tx-v1|<from_pub>|<to>|<amount>|<fee>|<nonce>`
-  (an internal protocol constant; not the brand).
+  (a protocol constant; not the brand). From height `ChainIDHeight` (700) it also
+  binds the genesis hash (chain-id): `cerebra-tx-v1|<chain-id>|<from_pub>|...`, so
+  a signature cannot be replayed onto a fork or any other chain sharing the
+  `crb1` address format.
+- **Fees** are cheap and self-adjusting: a floor of 0.00001 CRB that rises with
+  recent block fullness, enforced as a consensus minimum from height 450 (no
+  free-transaction bypass).
 
 ### 4.4. Blocks
 - Fixed 124-byte header (version, height, time, prev-hash, tx-root, target,
@@ -202,8 +213,15 @@ slower than a laptop.
 ### 4.5. Consensus rules
 Block validation checks version, height, prev-hash, timestamp (> median of last
 11 blocks, < now + 300 s), correct retarget target, coinbase rules (reward =
-subsidy + fees), unique signed transactions, balance/nonce correctness, and
-finally the proof of work.
+subsidy + fees, exactly), coinbase maturity (mined rewards become spendable only
+100 blocks deep), the height-activated minimum fee, chain-id-bound signatures,
+unique signed transactions, balance/nonce correctness, authority checkpoints
+(§5), and finally the proof of work.
+
+**Height-activated upgrades** (each turned on at a block height so the existing
+chain stays valid - no restart, no hard fork of history): 64 MiB dataset (240),
+enforced minimum fee (450), coinbase maturity (500), chain-id signature binding
+(700).
 
 ### 4.6. Genesis
 Empty coinbase to an unspendable address, timestamp 2026-06-11 00:00:00 UTC.
@@ -214,20 +232,30 @@ Coins exist only from mining.
 ## 5. 51% resistance (decentralized)
 
 A day-old PoW chain cannot be cryptographically final against a >50% attacker -
-real security comes from accumulated hashrate over time. Cereblix ships
-**decentralized, no-trusted-party** mitigations that kill the cheap catastrophic
-attack and buy time:
+real security comes from accumulated hashrate over time. Cereblix ships layered
+mitigations - **decentralized by default, plus an authority checkpoint for the
+bootstrap phase** - that kill the cheap catastrophic attack and buy time:
 
 - **Max reorg depth** (`-maxreorg`, default 100): any reorg that would rewrite
   more than N blocks is rejected outright, killing rewrite-from-genesis attacks.
 - **Reorg-cost penalty** (`-reorg-penalty`, optional): deeper reorgs must carry
   disproportionately more work.
-- **Checkpoints** (optional, **off by default**): a break-glass for an active
-  attack; not used in normal operation, so the default posture is fully
-  decentralized.
+- **Authority checkpoints** (bootstrap phase): an authority key signs the
+  canonical tip; every node pulls signed checkpoints from peers (`/p2p/checkpoint`),
+  verifies them against a public key compiled into the binary, and refuses any
+  chain that conflicts with one (no reorg may cross a checkpoint; a block at a
+  checkpointed height must match it). New nodes trust the key from first run, so
+  the network follows the canonical chain even against a higher-hashrate fork.
+  This is a **deliberate, transparent centralization for the early phase** -
+  removable (sign nothing, or ship a binary without the key) as independent
+  nodes and hashrate grow into real finality. The signer is the standalone
+  `cmd/cereblix-checkpoint` tool; the authority private key is held off the
+  network. It does NOT prevent anyone forking the open-source code into a
+  separate coin - it only protects this chain's history from rewrites.
 
 Honest limit: these make deep rewrites impractical and raise the cost of shallow
-double-spends, but full finality still requires time and hashrate.
+double-spends, but pure-hashrate finality still requires time and a distributed
+miner base.
 
 ---
 
@@ -238,14 +266,19 @@ optional built-in CPU miner.
 
 ### 6.1. P2P (HTTP, default `:18750`)
 `GET /p2p/tip`, `GET /p2p/hash?h=`, `GET /p2p/blocks?from=&count=`,
-`POST /p2p/block`, `POST /p2p/tx`, `GET /p2p/peers`. Sync (every 10 s) finds the
-common ancestor by binary search, downloads in batches and adopts the
-higher-work chain.
+`POST /p2p/block`, `POST /p2p/tx`, `GET /p2p/peers`, `GET /p2p/checkpoint`. Sync
+(every 10 s) finds the common ancestor by binary search, downloads in batches,
+adopts the higher-work chain, and pulls/enforces the authority checkpoint. The
+P2P port is per-IP rate-limited and `addPeer` rejects loopback/private/link-local
+URLs (SSRF guard).
 
 ### 6.2. RPC (HTTP, default `127.0.0.1:18751`, JSON, CORS)
-`status`, `balance`, `history`, `blocks`, `block?h=|hash=`, `tx` (GET lookup /
-POST submit), `mempool`, `getwork`, `submitwork`, `params`, `richlist`,
-`search`. `status` reports network hashrate (8-block window) and block age.
+`status`, `balance` (total, `spendable` and nonce), `history`, `blocks`,
+`block?h=|hash=`, `tx` (GET lookup / POST submit), `mempool`, `mined?addr=`
+(blocks mined to an address), `getwork`, `submitwork`, `checkpoint` (GET serve /
+POST from the authority signer), `params`, `richlist`, `search`. `status` reports
+network hashrate (8-block window), block age, the suggested fee, and the chain-id
+and its activation height.
 
 ### 6.3. getwork / submitwork
 External miners pull a header template + epoch seed via `getwork` and submit a
@@ -261,6 +294,31 @@ at epoch boundaries.
 - HTTP request body-size cap, read/write/idle timeouts (anti slow-loris),
   per-request panic recovery, and panic recovery in miner/sync goroutines.
 - RPC binds localhost; only P2P (and the reverse-proxied API) is public.
+
+### 6.6. Mining pool (`cmd/cereblix-pool`)
+A pool so small CPUs earn a steady trickle instead of a rare lottery win. It
+speaks the **same getwork/submitwork protocol as the node**, so the stock
+`cereblix-miner` works against it unchanged - only the `-node` URL differs. The
+pool hands out work paying its own wallet at an **easier "share" target**;
+every submitted share is re-verified (a real NeuroMorph hash). When a share also
+meets the network target the pool forwards the block. Block rewards are split
+among miners proportional to their shares (PROP, with a small pool fee) and paid
+out automatically once a miner crosses a threshold - paying only the *matured*
+(spendable) balance and in partial amounts as more coinbase matures.
+
+### 6.7. Faucet with a proof-of-useful-work captcha (`cmd/cereblix-faucet`)
+A faucet that lets newcomers try the wallet without mining first. Its anti-bot
+captcha is **a real NeuroMorph share**: the browser mines one share (via the
+WebAssembly hasher) against a template paying a dedicated faucet wallet - so the
+"captcha" is genuine work in the coin's own algorithm (a bot must actually mine),
+and occasionally a share is also a full block. The faucet then sends a tiered
+amount, rate-limited per address and per IP (real client IP taken from the last
+`X-Forwarded-For` hop, so the limit can't be header-spoofed).
+
+### 6.8. Authority checkpoint signer (`cmd/cereblix-checkpoint`)
+The operator-only tool that periodically signs a block a few behind the tip with
+the authority key and pushes it to the node (`POST /api/checkpoint`), which
+serves it to peers. See §5. The private key is kept off the network.
 
 ---
 
@@ -340,9 +398,12 @@ GOOS=windows GOARCH=amd64 go build -o cereblix-miner.exe ./cmd/cereblix-miner
 
 - **Chain & state are in RAM**; reorgs rewrite the JSONL store. Fine for a young
   chain; a serious size would need an on-disk DB and state snapshots.
-- **No coinbase maturity** - rewards are spendable immediately.
-- **No privacy** - the chain is transparent (addresses and amounts are visible).
-  Cereblix does not attempt Monero-style privacy.
+- **Transparent ledger, by design** - addresses and amounts are public; Cereblix
+  does not attempt Monero-style privacy. This is deliberate: privacy coins face
+  exchange delisting, while a transparent chain is auditable and
+  compliance-friendly.
+- **Early-phase authority checkpoint** - a deliberate, removable centralization
+  while the network bootstraps (§5).
 - **P2P is HTTP polling**, not a gossip overlay - simplicity over latency.
 - **64 MiB dataset** forces DRAM on ASICs and commodity CPUs, but fits in the L3
   of very large server CPUs (raising the size would close that gap at some cost

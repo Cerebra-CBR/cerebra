@@ -5,6 +5,8 @@ proof-of-work algorithm.** No GPU, no ASIC - ever. One CPU, one vote.
 
 - 🌐 Site & explorer: http://188.34.181.191/cereblix/
 - 💼 Web wallet: http://188.34.181.191/cereblix/wallet/
+- 🚰 Free faucet: http://188.34.181.191/cereblix/faucet.html
+- ⛏️ Pool: `-node http://188.34.181.191/cereblix/pool/api`
 - 📖 Full design: [ARCHITECTURE.md](ARCHITECTURE.md)
 
 > A free, open-source project with **zero premine, zero fund, no fundraising**.
@@ -90,6 +92,24 @@ cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" web/site/wasm_exec.js
 Hashing is verified byte-identical across amd64, arm64 and wasm
 (`TestCrossPlatformHash`), so browser/phone-found blocks are accepted.
 
+### Mine in a pool (steady rewards)
+
+Solo mining is a lottery; a pool pays a steady trickle proportional to your work.
+The stock miner works against the pool unchanged - just point `-node` at it:
+
+```sh
+cereblix-miner -addr crb1YOURADDRESS -node http://188.34.181.191/cereblix/pool/api
+```
+
+On the pool the miner logs frequent "block found" - those are *shares*; your real
+reward arrives as automatic pool payouts to your address.
+
+### Free faucet
+
+No coins yet? Grab a little from the faucet to try the wallet. The anti-bot check
+is a real in-browser NeuroMorph **share** (your CPU mines for a moment), so it
+doubles as a tiny mining onramp: http://188.34.181.191/cereblix/faucet.html
+
 ## Run a full node
 
 ```sh
@@ -121,10 +141,11 @@ cereblix-wallet richlist             # top addresses
 
 ```
 neuromorph/   NeuroMorph PoW virtual machine
-core/         chain, state, mempool, consensus rules
+core/         chain, state, mempool, consensus rules, checkpoints
 node/         P2P sync, JSON RPC, getwork/submitwork, built-in miner
-cmd/          cereblixd, cereblix-miner, cereblix-wallet
-web/          project site + block explorer + web wallet
+cmd/          cereblixd · cereblix-miner · cereblix-wallet · cereblix-pool ·
+              cereblix-faucet · cereblix-checkpoint · cereblix-wasm
+web/          project site + block explorer + web wallet + browser miner
 deploy/       systemd unit
 ```
 
