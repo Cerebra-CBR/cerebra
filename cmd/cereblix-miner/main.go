@@ -14,10 +14,12 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"math/big"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -27,6 +29,14 @@ import (
 
 	"cereblix/core"
 	nm "cereblix/neuromorph"
+)
+
+const (
+	minerVersion     = "1.2"
+	hostMain         = "https://cereblix.com"
+	hostRU           = "https://ru.cereblix.com"
+	updateVersionURL = "https://github.com/Cerebra-CBR/cereblix/releases/latest/download/miner-version.txt"
+	releasePage      = "https://github.com/Cerebra-CBR/cereblix/releases/latest"
 )
 
 type work struct {
@@ -50,11 +60,6 @@ type config struct {
 	Mode    string `json:"mode"`    // "pool" or "solo" (display only; Node is authoritative)
 	Threads int    `json:"threads"`
 }
-
-const (
-	hostMain = "https://cereblix.com"
-	hostRU   = "https://ru.cereblix.com"
-)
 
 var (
 	nodeURL   string
@@ -196,21 +201,174 @@ func wizard(in *bufio.Reader, cur config) config {
 	return c
 }
 
+// --- self-update -----------------------------------------------------------
+
+func dlURL() string {
+	base := "https://github.com/Cerebra-CBR/cereblix/releases/latest/download/"
+	if runtime.GOOS == "windows" {
+		return base + "cereblix-miner-windows-amd64.exe"
+	}
+	return base + "cereblix-miner-linux-amd64"
+}
+
+// newer reports whether version a is higher than b ("1.10" > "1.9").
+func newer(a, b string) bool {
+	ap, bp := strings.Split(strings.TrimSpace(a), "."), strings.Split(b, ".")
+	for i := 0; i < len(ap); i++ {
+		var x, y int
+		fmt.Sscanf(ap[i], "%d", &x)
+		if i < len(bp) {
+			fmt.Sscanf(bp[i], "%d", &y)
+		}
+		if x != y {
+			return x > y
+		}
+	}
+	return false
+}
+
+// checkUpdate asks GitHub for the latest miner version. If GitHub is blocked
+// (common in RU/CIS) it just suggests a manual check and moves on. If a newer
+// version exists it offers a one-key auto-update.
+func checkUpdate(in *bufio.Reader, tty bool) {
+	cl := &http.Client{Timeout: 6 * time.Second}
+	resp, err := cl.Get(updateVersionURL)
+	if err != nil {
+		fmt.Println("ℹ Could not reach GitHub to check for updates (it may be blocked in your region).")
+		fmt.Println("  Check for a newer miner manually:", releasePage)
+		return
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 64))
+	latest := strings.TrimSpace(string(b))
+	if resp.StatusCode != 200 || latest == "" || !newer(latest, minerVersion) {
+		return // up to date, or couldn't determine
+	}
+	fmt.Printf("\n⬆  A newer miner is available: v%s (you have v%s)\n", latest, minerVersion)
+	fmt.Printf("   Download: %s\n", dlURL())
+	if !tty {
+		fmt.Println("   Run interactively to auto-update, or download manually.")
+		return
+	}
+	fmt.Print("   Auto-update now? [y/N]: ")
+	if strings.ToLower(read(in)) != "y" {
+		fmt.Println("   Skipped. You can update later anytime.")
+		return
+	}
+	if err := selfUpdate(); err != nil {
+		fmt.Println("   Update failed:", err)
+		fmt.Println("   Download manually:", dlURL())
+		return
+	}
+	fmt.Println("   ✔ Updated to v" + latest + ". Restarting the miner...")
+	exe, _ := os.Executable()
+	cmd := exec.Command(exe, os.Args[1:]...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if cmd.Start() == nil {
+		os.Exit(0)
+	}
+}
+
+// selfUpdate downloads the new binary and swaps it in, keeping a .old backup.
+// Renaming a running executable is allowed on both Windows and Linux.
+func selfUpdate() error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	cl := &http.Client{Timeout: 180 * time.Second}
+	resp, err := cl.Get(dlURL())
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("download HTTP %d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if len(data) < 1_000_000 { // sanity: a real binary is several MB
+		return fmt.Errorf("downloaded file looks wrong (%d bytes)", len(data))
+	}
+	if err := os.WriteFile(exe+".new", data, 0o755); err != nil {
+		return err
+	}
+	os.Remove(exe + ".old")
+	if err := os.Rename(exe, exe+".old"); err != nil {
+		return err
+	}
+	if err := os.Rename(exe+".new", exe); err != nil {
+		os.Rename(exe+".old", exe) // revert
+		return err
+	}
+	return nil
+}
+
+// runUpdate is the -update flag: fetch latest, install if newer, then exit.
+func runUpdate() {
+	cl := &http.Client{Timeout: 10 * time.Second}
+	resp, err := cl.Get(updateVersionURL)
+	if err != nil {
+		fmt.Println("Could not reach GitHub (it may be blocked in your region).")
+		fmt.Println("Download the latest miner manually:", releasePage)
+		return
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 64))
+	latest := strings.TrimSpace(string(b))
+	if resp.StatusCode != 200 || latest == "" {
+		fmt.Println("Couldn't determine the latest version. Check manually:", releasePage)
+		return
+	}
+	if !newer(latest, minerVersion) {
+		fmt.Printf("Already up to date (v%s).\n", minerVersion)
+		return
+	}
+	fmt.Printf("Updating v%s -> v%s ...\n", minerVersion, latest)
+	if err := selfUpdate(); err != nil {
+		fmt.Println("Update failed:", err)
+		fmt.Println("Download manually:", dlURL())
+		return
+	}
+	fmt.Println("✔ Updated to v" + latest + ". Start the miner again to run the new version.")
+}
+
 func main() {
+	// delete the old binary left over from a previous self-update. On Windows the
+	// just-exited old process can hold the file for a moment, so retry until gone.
+	if exe, err := os.Executable(); err == nil {
+		go func() {
+			for i := 0; i < 20; i++ {
+				if os.Remove(exe+".old") == nil {
+					return
+				}
+				time.Sleep(300 * time.Millisecond)
+			}
+		}()
+	}
+
 	var fNode, fAddr string
 	var fThreads int
-	var fReset, fReconf bool
+	var fReset, fReconf, fUpdate bool
 	flag.StringVar(&fNode, "node", "", "node RPC base URL (overrides saved config)")
 	flag.StringVar(&fAddr, "addr", "", "your CRB address (overrides saved config)")
 	flag.IntVar(&fThreads, "threads", 0, "mining threads (overrides saved config)")
 	flag.BoolVar(&fReset, "reset", false, "wipe the saved config and reconfigure")
 	flag.BoolVar(&fReconf, "reconfigure", false, "re-run the setup wizard")
+	flag.BoolVar(&fUpdate, "update", false, "download & install the latest miner from GitHub, then exit")
 	flag.Parse()
 
 	fmt.Println("╔══════════════════════════════════════════════╗")
-	fmt.Println("║   Cereblix · NeuroMorph CPU miner  v1.1       ║")
+	fmt.Println("║   Cereblix · NeuroMorph CPU miner  v1.2       ║")
 	fmt.Println("║   one CPU = one vote                          ║")
 	fmt.Println("╚══════════════════════════════════════════════╝")
+
+	if fUpdate {
+		runUpdate()
+		return
+	}
 
 	cfg, have := loadConfig()
 	if fReset {
@@ -276,6 +434,8 @@ func main() {
 	nodeURL, addr = cfg.Node, cfg.Addr
 	threads := cfg.Threads
 
+	checkUpdate(in, tty)
+
 	fmt.Println()
 	fmt.Printf("⚙  All your settings live in:  %s\n", configPath())
 	fmt.Println("   They're loaded automatically next time. To change them:")
@@ -285,13 +445,12 @@ func main() {
 	fmt.Println()
 	log.Printf("mode: %s | node: %s | address: %s | threads: %d", cfg.Mode, nodeURL, addr, threads)
 
+	// Try once for a friendly status line, but NEVER exit on failure: the miner
+	// keeps retrying until it reaches a node, or until the user stops it (Ctrl+C).
 	if err := fetchWork(); err != nil {
-		log.Printf("cannot reach node: %v", err)
-		if tty {
-			fmt.Print("Press Enter to exit...")
-			in.ReadString('\n')
-		}
-		os.Exit(1)
+		log.Printf("node not reachable yet (%v) - will keep retrying, just leave it running", err)
+	} else {
+		log.Printf("connected - mining")
 	}
 	go workLoop()
 	for i := 0; i < threads; i++ {
@@ -303,6 +462,10 @@ func main() {
 		time.Sleep(15 * time.Second)
 		cur := hashCount.Load()
 		w := current.Load()
+		if w == nil {
+			log.Printf("still waiting for the node... (no work yet) - retrying, leave it running")
+			continue
+		}
 		log.Printf("hashrate: %.1f H/s | block %d (epoch %d) | shares %d · blocks %d",
 			float64(cur-last)/15.0, w.Height, w.Epoch, shares.Load(), blocks.Load())
 		last = cur
@@ -317,7 +480,7 @@ func fetchWork() error {
 	defer resp.Body.Close()
 	var w work
 	if err := json.NewDecoder(resp.Body).Decode(&w); err != nil {
-		return err
+		return fmt.Errorf("node/proxy returned a non-JSON response (temporary outage? HTTP %d) - retrying", resp.StatusCode)
 	}
 	if w.Header == "" {
 		return fmt.Errorf("node returned no work")
@@ -343,6 +506,10 @@ func mineThread(id uint64) {
 	var vmSeed string
 	for {
 		w := current.Load()
+		if w == nil { // no work yet (node unreachable) - wait, never crash
+			time.Sleep(time.Second)
+			continue
+		}
 		if w.Seed != vmSeed {
 			seed, _ := hex.DecodeString(w.Seed)
 			vm = nm.NewVM(nm.DeriveParams(seed))
