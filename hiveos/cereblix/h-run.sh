@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Launch the Cereblix CPU miner. Hive runs this inside a screen session; we tee
 # output to the log so stats.sh can report hashrate/shares to the dashboard.
-cd "$(dirname "$0")"
+# BASH_SOURCE (not $0) locates us correctly however Hive invokes the script.
+cd "$(dirname "${BASH_SOURCE[0]}")"
 . h-manifest.conf
 
 mkdir -p "$(dirname "$CUSTOM_LOG_BASENAME")"
