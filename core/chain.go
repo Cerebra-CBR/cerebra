@@ -915,7 +915,22 @@ func minFeeFor(blocks []*Block) uint64 {
 		}
 	}
 	fill := float64(txs) / float64(capacity) // 0..1
-	return uint64(float64(floor) * (1.0 + fullMult*fill*fill))
+	if uint64(len(blocks)) < SoftFeeHeight {
+		// legacy curve - kept byte-for-byte so nodes agree on history and on
+		// new blocks until the SoftFeeHeight activation.
+		return uint64(float64(floor) * (1.0 + fullMult*fill*fill))
+	}
+	// Gentle curve: stay at the base floor until blocks are SUSTAINEDLY over
+	// half full (across the 20-block window), then ramp. A one-off payout burst
+	// (a single fat block, fill well under 0.5 on average) no longer lifts the
+	// floor, so cheap txns aren't stranded and blocks don't sit empty while the
+	// mempool waits. Even completely full blocks cap at ~101x floor (~0.001 CRB).
+	const knee = 0.5
+	if fill <= knee {
+		return floor
+	}
+	over := (fill - knee) / (1.0 - knee) // 0..1 above the knee
+	return uint64(float64(floor) * (1.0 + 100.0*over*over))
 }
 
 // SuggestedFee returns the current cheap, self-adjusting fee (synapses).

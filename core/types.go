@@ -39,6 +39,14 @@ const (
 	// (existing blocks, including any early 0-fee test tx, stay valid).
 	MinFeeHeight = 450
 
+	// SoftFeeHeight: from this height the fee floor uses a gentler curve that
+	// stays at the base floor until blocks are SUSTAINEDLY over half full. Below
+	// this height the original curve is kept byte-for-byte so all nodes still
+	// agree on history (and on new blocks until activation). The old curve was
+	// so steep that a single payout-burst block spiked the floor for ~20 blocks,
+	// stranding cheap txns and producing empty blocks while the mempool waited.
+	SoftFeeHeight = 3055
+
 	// ChainIDHeight: from this height, transaction signatures must additionally
 	// commit to ChainID (the genesis hash). This binds a signature to THIS chain
 	// so it cannot be replayed onto a fork or testnet that shares the crb1
