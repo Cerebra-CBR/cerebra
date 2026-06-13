@@ -125,7 +125,7 @@ const T = {
     txs:"Transactions",last:"latest",backblocks:"← back to latest blocks",backhome:"← back",
     tx:"Transaction",status:"status",pending:"in mempool (0 conf.)",confirmedin:"confirmations in block",time:"time",coinbase:"coinbase (issuance)",
     address:"Address",balance:"balance",unconf:"unconfirmed balance",received:"received",mined:"mined",sent:"sent",ntx:"transactions",nonce2:"nonce",txhist:"Transaction history",
-    notx:"no transactions",send:"send",recv:"receive",mining:"mining",page:"page",of:"of",newer:"← newer",older:"older →",
+    notx:"no transactions",send:"send",recv:"receive",mining:"mining",page:"page",of:"of",newer:"← newer",older:"older →",loadmore:"Load more",loadolder:"Load older blocks ↓",showing:"showing",
     rich_t:"Richest addresses",share:"share",you:"you",mp_t:"Mempool (unconfirmed)",mp_empty:"mempool is empty - all transactions confirmed",
     notfound:"Nothing found",copy:"copy"},
   ru:{home:"Главная",mine:"Майнинг",pool:"Пул",about:"О проекте",explorer:"Обозреватель",rich:"Богатейшие",mempool:"Мемпул",wallet:"Кошелёк",faucet:"Кран",roadmap:"Дорожная карта",find:"Найти",
@@ -137,7 +137,7 @@ const T = {
     txs:"Транзакции",last:"последний",backblocks:"← к последним блокам",backhome:"← назад",
     tx:"Транзакция",status:"статус",pending:"в мемпуле (0 подтв.)",confirmedin:"подтверждений в блоке",time:"время",coinbase:"coinbase (эмиссия)",
     address:"Адрес",balance:"баланс",unconf:"неподтверждённый баланс",received:"получено",mined:"намайнено",sent:"отправлено",ntx:"транзакций",nonce2:"nonce",txhist:"История транзакций",
-    notx:"нет транзакций",send:"отправка",recv:"получение",mining:"майнинг",page:"стр.",of:"из",newer:"← новее",older:"старее →",
+    notx:"нет транзакций",send:"отправка",recv:"получение",mining:"майнинг",page:"стр.",of:"из",newer:"← новее",older:"старее →",loadmore:"Показать ещё",loadolder:"Показать старее ↓",showing:"показано",
     rich_t:"Богатейшие адреса",share:"доля",you:"вы",mp_t:"Мемпул (неподтверждённые)",mp_empty:"мемпул пуст - все транзакции подтверждены",
     notfound:"Ничего не найдено",copy:"копировать"}
 };
@@ -191,20 +191,40 @@ async function loadStats(){
   }catch(e){ $('stats').innerHTML = `<div class="err">${t('node_down')}: ${esc(e.message)}</div>`; }
 }
 
+let homeState = {blocks:[], expanded:false, loading:false};
 async function showHome(){
   location.hash = '';
   try{
     const blocks = await api('/blocks?last=20');
-    const rows = blocks.map(b => `<tr>
-      <td>${aBlock(b.height,'#'+b.height)}</td>
-      <td>${tstr(b.time)}</td>
-      <td class="mono">${aBlock(b.height,short(b.hash,18))}</td>
-      <td>${b.txs}</td>
-      <td class="mono">${aAddr(b.miner,short(b.miner,14))}</td>
-      <td>${fmt(b.reward)}</td></tr>`).join('');
-    $('view').innerHTML = `<div class="card"><h2>${t('latest')}<span class="tag">${t('auto10')}</span></h2>
-      <table><tr><th>#</th><th>${t('c_time')}</th><th>${t('c_hash')}</th><th>${t('c_tx')}</th><th>${t('c_miner')}</th><th>${t('c_reward')}</th></tr>${rows}</table></div>`;
+    homeState = {blocks: blocks||[], expanded:false, loading:false};
+    renderHome();
   }catch(e){ $('view').innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+}
+function renderHome(){
+  const {blocks, loading} = homeState;
+  const rows = blocks.map(b => `<tr>
+    <td>${aBlock(b.height,'#'+b.height)}</td>
+    <td>${tstr(b.time)}</td>
+    <td class="mono">${aBlock(b.height,short(b.hash,18))}</td>
+    <td>${b.txs}</td>
+    <td class="mono">${aAddr(b.miner,short(b.miner,14))}</td>
+    <td>${fmt(b.reward)}</td></tr>`).join('');
+  const oldest = blocks.length ? blocks[blocks.length-1].height : 0;
+  $('view').innerHTML = `<div class="card"><h2>${t('latest')}<span class="tag">${t('auto10')}</span></h2>
+    <table><tr><th>#</th><th>${t('c_time')}</th><th>${t('c_hash')}</th><th>${t('c_tx')}</th><th>${t('c_miner')}</th><th>${t('c_reward')}</th></tr>${rows}</table>
+    ${oldest>0?`<div class="pager"><button onclick="loadOlderBlocks()" ${loading?'disabled':''}>${t('loadolder')}</button></div>`:''}</div>`;
+}
+async function loadOlderBlocks(){
+  const {blocks, loading} = homeState;
+  if(loading || !blocks.length) return;
+  const oldest = blocks[blocks.length-1].height;
+  if(oldest<=0) return;
+  homeState.expanded = true; homeState.loading = true; renderHome();
+  try{
+    const more = await api('/blocks?last=20&before='+oldest);
+    homeState.blocks = blocks.concat(more||[]);
+  }catch(e){}
+  homeState.loading = false; renderHome();
 }
 
 async function showBlock(h){
@@ -271,15 +291,16 @@ async function showTx(id){
   }catch(e){ $('view').innerHTML = `<a class="back" onclick="showHome()">${t('backhome')}</a><div class="err">${esc(e.message)}</div>`; }
 }
 
-let addrState = {addr:'', page:0, hist:[]};
+// Address history is fetched from the node in pages (HIST_PAGE at a time) on
+// demand, so even an address with thousands of txns is fully viewable without
+// the node ever returning a giant payload. `total` (b.txn) is the exact
+// confirmed count; pending mempool txns are shown on top and counted separately.
+const HIST_PAGE = 50;
+let addrState = {addr:'', pending:[], conf:[], total:0, loading:false};
 async function showAddr(addr){
   location.hash = 'addr/'+addr;
   try{
     const b = await api('/balance?addr='+addr);
-    const hist = await api('/history?addr='+addr+'&limit=200').catch(()=>[]);
-    // Pending (unconfirmed) txns from the mempool that involve this address get
-    // prepended to the history and marked; the unconfirmed balance = confirmed
-    // balance plus their net effect.
     let mp = []; try { mp = await api('/mempool') || []; } catch(e){}
     let delta = 0;
     const pend = (mp||[]).filter(x => x.to===addr || addrOf(x.from_pub)===addr).map(x => {
@@ -287,11 +308,11 @@ async function showAddr(addr){
       delta += (from===addr) ? -(x.amount + x.fee) : x.amount;
       return { pending:true, from, to:x.to, amount:x.amount, fee:x.fee, txid:txId(x) };
     });
-    // Lifetime totals come from the node (full-chain scan); the 200-tx history
-    // is only the recent window shown below and must not be summed for totals.
+    const conf = await api('/history?addr='+addr+'&limit='+HIST_PAGE+'&offset=0').catch(()=>[]);
+    // Lifetime totals come from the node (full-chain scan), not from the page.
     const recv = b.received||0, sent = b.sent||0, mined = b.mined||0;
-    const ntx = b.txn!=null ? b.txn : (hist||[]).length;
-    addrState = {addr, page:0, hist: pend.concat(hist||[])};
+    const total = b.txn!=null ? b.txn : (conf||[]).length;
+    addrState = {addr, pending:pend, conf:(conf||[]), total, loading:false};
     const uncRow = delta!==0
       ? `<div>${t('unconf')}</div><div class="big">${fmt(b.balance+delta)} <span class="pill wait">${pend.length} ${t('pending')}</span></div>`
       : '';
@@ -302,17 +323,17 @@ async function showAddr(addr){
         ${uncRow}
         <div>${t('received')}</div><div>${fmt(recv)} <span class="muted">(${t('mined')} ${fmt(mined)})</span></div>
         <div>${t('sent')}</div><div>${fmt(sent)}</div>
-        <div>${t('ntx')}</div><div>${ntx}</div>
+        <div>${t('ntx')}</div><div>${total}</div>
         <div>${t('nonce2')}</div><div>${b.nonce}</div>
       </div></div>
-      <div class="card"><h2>${t('txhist')}</h2><div id="histbox"></div></div>`;
+      <div class="card"><h2>${t('txhist')}<span class="tag">${total} ${t('ntx')}</span></h2><div id="histbox"></div></div>`;
     renderHist();
   }catch(e){ $('view').innerHTML = `<a class="back" onclick="showHome()">${t('backhome')}</a><div class="err">${esc(e.message)}</div>`; }
 }
 function renderHist(){
-  const {addr, page, hist} = addrState;
-  const per = 25, start = page*per, pageItems = hist.slice(start, start+per);
-  const rows = pageItems.map(h=>{
+  const {addr, pending, conf, total, loading} = addrState;
+  const items = pending.concat(conf);
+  const rows = items.map(h=>{
     const out = h.from === addr;
     const peer = out ? h.to : h.from;
     const typ = out ? t('send') : (h.from==='coinbase'?t('mining'):t('recv'));
@@ -324,45 +345,88 @@ function renderHist(){
       <td class="mono">${aTx(h.txid,short(h.txid,10))}</td>
       <td>${out?'−':'+'}${fmt(h.amount)}</td></tr>`;
   }).join('') || `<tr><td colspan="6" class="muted">${t('notx')}</td></tr>`;
-  const pages = Math.ceil(hist.length/per);
+  const more = conf.length < total;
   $('histbox').innerHTML = `<table>
     <tr><th>${t('c_block')}</th><th>${t('c_time')}</th><th>${t('c_type')}</th><th>${t('c_peer')}</th><th>${t('c_txid')}</th><th>${t('c_amount')}</th></tr>${rows}</table>
-    ${pages>1?`<div class="pager">
-      <button onclick="addrPage(-1)" ${page===0?'disabled':''}>${t('newer')}</button>
-      <span class="muted" style="align-self:center">${t('page')} ${page+1} ${t('of')} ${pages}</span>
-      <button onclick="addrPage(1)" ${page>=pages-1?'disabled':''}>${t('older')}</button></div>`:''}`;
+    <div class="pager">
+      <span class="muted" style="align-self:center">${t('showing')} ${conf.length} ${t('of')} ${total}${pending.length?` (+${pending.length} ${t('pending')})`:''}</span>
+      ${more?`<button onclick="loadMoreHist()" ${loading?'disabled':''}>${t('loadmore')}</button>`:''}
+    </div>`;
 }
-function addrPage(d){ addrState.page += d; renderHist(); }
+async function loadMoreHist(){
+  if(addrState.loading || addrState.conf.length>=addrState.total) return;
+  addrState.loading = true; renderHist();
+  try{
+    const more = await api('/history?addr='+addrState.addr+'&limit='+HIST_PAGE+'&offset='+addrState.conf.length);
+    const seen = new Set(addrState.conf.map(h=>h.txid));
+    addrState.conf = addrState.conf.concat((more||[]).filter(h=>!seen.has(h.txid)));
+  }catch(e){}
+  addrState.loading = false; renderHist();
+}
 
+const RICH_PAGE = 100;
+let richState = {list:[], supply:1, loading:false, done:false};
 async function showRich(){
   location.hash = 'rich';
   try{
-    const list = await api('/richlist?n=100');
-    const supply = (await api('/status')).supply;
-    const rows = list.map((e,i)=>`<tr><td>${i+1}</td>
-      <td class="mono">${aAddr(e.address,e.address)}</td>
-      <td>${fmt(e.balance)}</td>
-      <td>${(e.balance/supply*100).toFixed(2)}%</td></tr>`).join('');
-    $('view').innerHTML = `<div class="card"><h2>${t('rich_t')}<span class="tag">${list.length}</span></h2>
-      <table><tr><th>#</th><th>${t('address')}</th><th>${t('balance')}</th><th>${t('share')}</th></tr>${rows}</table></div>`;
+    const supply = (await api('/status')).supply || 1;
+    const list = await api('/richlist?n='+RICH_PAGE+'&offset=0');
+    richState = {list:(list||[]), supply, loading:false, done:(list||[]).length<RICH_PAGE};
+    renderRich();
   }catch(e){ $('view').innerHTML = `<div class="err">${esc(e.message)}</div>`; }
 }
+function renderRich(){
+  const {list, supply, loading, done} = richState;
+  const rows = list.map((e,i)=>`<tr><td>${i+1}</td>
+    <td class="mono">${aAddr(e.address,e.address)}</td>
+    <td>${fmt(e.balance)}</td>
+    <td>${(e.balance/supply*100).toFixed(2)}%</td></tr>`).join('');
+  $('view').innerHTML = `<div class="card"><h2>${t('rich_t')}<span class="tag">${list.length}</span></h2>
+    <table><tr><th>#</th><th>${t('address')}</th><th>${t('balance')}</th><th>${t('share')}</th></tr>${rows}</table>
+    ${!done?`<div class="pager"><button onclick="loadMoreRich()" ${loading?'disabled':''}>${t('loadmore')}</button></div>`:''}</div>`;
+}
+async function loadMoreRich(){
+  if(richState.loading || richState.done) return;
+  richState.loading = true; renderRich();
+  try{
+    const more = await api('/richlist?n='+RICH_PAGE+'&offset='+richState.list.length);
+    richState.list = richState.list.concat(more||[]);
+    if(!more || more.length<RICH_PAGE) richState.done = true;
+  }catch(e){}
+  richState.loading = false; renderRich();
+}
 
+// Mempool is fetched once (it is bounded by mempool policy) and paged on the
+// client, so a large backlog never renders thousands of DOM rows at once.
+const MP_PAGE = 50;
+let mpState = {list:[], page:0};
 async function showMempool(){
   location.hash = 'mempool';
   try{
     const mp = await api('/mempool');
-    const rows = (mp||[]).map(x=>{
-      const from = addrOf(x.from_pub);
-      return `<tr><td class="mono">${aTx(txId(x),short(txId(x),16))}</td>
-        <td class="mono">${aAddr(from,short(from,14))}</td>
-        <td class="mono">${aAddr(x.to,short(x.to,14))}</td>
-        <td>${fmt(x.amount)}</td><td>${fmt(x.fee)}</td></tr>`;
-    }).join('') || `<tr><td colspan="5" class="muted">${t('mp_empty')}</td></tr>`;
-    $('view').innerHTML = `<div class="card"><h2>${t('mp_t')}<span class="tag">${(mp||[]).length}</span></h2>
-      <table><tr><th>${t('c_txid')}</th><th>${t('c_from')}</th><th>${t('c_to')}</th><th>${t('c_amount')}</th><th>${t('c_fee')}</th></tr>${rows}</table></div>`;
+    mpState = {list:(mp||[]), page:0};
+    renderMempool();
   }catch(e){ $('view').innerHTML = `<div class="err">${esc(e.message)}</div>`; }
 }
+function renderMempool(){
+  const {list, page} = mpState;
+  const per = MP_PAGE, start = page*per, items = list.slice(start, start+per);
+  const rows = items.map(x=>{
+    const from = addrOf(x.from_pub);
+    return `<tr><td class="mono">${aTx(txId(x),short(txId(x),16))}</td>
+      <td class="mono">${aAddr(from,short(from,14))}</td>
+      <td class="mono">${aAddr(x.to,short(x.to,14))}</td>
+      <td>${fmt(x.amount)}</td><td>${fmt(x.fee)}</td></tr>`;
+  }).join('') || `<tr><td colspan="5" class="muted">${t('mp_empty')}</td></tr>`;
+  const pages = Math.ceil(list.length/per) || 1;
+  $('view').innerHTML = `<div class="card"><h2>${t('mp_t')}<span class="tag">${list.length}</span></h2>
+    <table><tr><th>${t('c_txid')}</th><th>${t('c_from')}</th><th>${t('c_to')}</th><th>${t('c_amount')}</th><th>${t('c_fee')}</th></tr>${rows}</table>
+    ${pages>1?`<div class="pager">
+      <button onclick="mpPage(-1)" ${page===0?'disabled':''}>${t('newer')}</button>
+      <span class="muted" style="align-self:center">${t('page')} ${page+1} ${t('of')} ${pages}</span>
+      <button onclick="mpPage(1)" ${page>=pages-1?'disabled':''}>${t('older')}</button></div>`:''}</div>`;
+}
+function mpPage(d){ mpState.page += d; renderMempool(); }
 
 async function doSearch(){
   const q = $('q').value.trim();
@@ -419,7 +483,7 @@ function route(){
 }
 applyChrome();
 loadStats().then(route);
-setInterval(()=>{ loadStats(); if(location.hash==='') showHome(); }, 10000);
+setInterval(()=>{ loadStats(); if(location.hash==='' && !homeState.expanded) showHome(); }, 10000);
 </script>
 </body>
 </html>

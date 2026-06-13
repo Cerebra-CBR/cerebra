@@ -148,6 +148,10 @@ const UNIT = 1e8;
 let keys = null; // {secretKey: Uint8Array(64), publicKey: Uint8Array(32), address}
 let feeEdited = false; // becomes true once the user types a custom fee
 let feeFloor = 0, feeSuggested = 0; // latest network min / recommended fee (synapses)
+// Transaction history paging: the live top page (refreshed) + older pages the
+// user loads on demand, so every tx is reachable without huge node payloads.
+const HIST_PAGE = 30;
+let histRecent = [], histExtra = [], histPendingRows = '', histTotal = 0, histLoading = false;
 
 const $ = id => document.getElementById(id);
 const hex = b => Array.from(b).map(x=>x.toString(16).padStart(2,'0')).join('');
@@ -167,7 +171,7 @@ const L = {
     e_keylen:"key must be 128 hex characters",err:"Error",copied:"Address copied",
     show_confirm:"Show the private key? Make sure nobody is looking at the screen.",your_key:"Your private key:",
     logout_confirm:"Remove the key from this browser? Without a saved copy you'll lose access to the coins.",
-    out:"− sent",in_:"+ received",empty_hist:"empty so far - mine or receive your first CRB",pend:"pending",unconf:"Unconfirmed",
+    out:"− sent",in_:"+ received",empty_hist:"empty so far - mine or receive your first CRB",pend:"pending",unconf:"Unconfirmed",loadmore:"Load more",showing:"showing",of:"of",
     net:(s)=>`height <b>${s.height}</b> · epoch ${s.epoch} · network hashrate ~<b>${((+s.hashrate||0)/1e6).toFixed(2)}</b> MH/s · supply ${fmt(s.supply)} CRB · reward ${fmt(s.reward)} CRB · mempool ${s.mempool}`,
     node_down:"node unavailable: ",bad_to:"invalid recipient address",bad_amount:"invalid amount",
     speedup:"speed up",cancel_tx:"cancel",
@@ -189,7 +193,7 @@ const L = {
     e_keylen:"ключ должен быть 128 hex-символов",err:"Ошибка",copied:"Адрес скопирован",
     show_confirm:"Показать приватный ключ? Убедитесь, что никто не смотрит на экран.",your_key:"Ваш приватный ключ:",
     logout_confirm:"Удалить ключ из этого браузера? Без сохранённой копии ключа вы потеряете доступ к монетам.",
-    out:"− отправка",in_:"+ получение",empty_hist:"пока пусто - намайните или получите первые CRB",pend:"в мемпуле",unconf:"Неподтверждённый",
+    out:"− отправка",in_:"+ получение",empty_hist:"пока пусто - намайните или получите первые CRB",pend:"в мемпуле",unconf:"Неподтверждённый",loadmore:"Показать ещё",showing:"показано",of:"из",
     net:(s)=>`высота <b>${s.height}</b> · эпоха ${s.epoch} · хэшрейт сети ~<b>${((+s.hashrate||0)/1e6).toFixed(2)}</b> MH/s · эмиссия ${fmt(s.supply)} CRB · награда за блок ${fmt(s.reward)} CRB · мемпул ${s.mempool}`,
     node_down:"нода недоступна: ",bad_to:"некорректный адрес получателя",bad_amount:"некорректная сумма",
     speedup:"ускорить",cancel_tx:"отменить",
@@ -337,7 +341,8 @@ async function refresh(){
     const myPub = hex(keys.publicKey);
     const b = await api('/balance?addr=' + keys.address);
     $('nonce').textContent = b.nonce;
-    const hist = await api('/history?addr=' + keys.address + '&limit=30').catch(()=>[]);
+    histRecent = await api('/history?addr=' + keys.address + '&limit=' + HIST_PAGE + '&offset=0').catch(()=>[]) || [];
+    histTotal = b.txn != null ? b.txn : histRecent.length;
     // pending (unconfirmed) txns from the mempool that involve this address
     let mp = []; try { mp = await api('/mempool') || []; } catch(e){}
     const pendBadge = `<span style="background:#7a5b12;color:#ffd97a;border-radius:6px;padding:1px 6px;font-size:11px">${t('pend')}</span>`;
@@ -358,19 +363,48 @@ async function refresh(){
         <td class="mono" style="font-size:12px">${peer.slice(0,16)}…${actions}</td>
         <td class="${out?'out':'in'}">${out?'−':'+'}${fmt(x.amount)}</td></tr>`;
     }).join('');
+    histPendingRows = pr;
     $('balance').textContent = fmt(b.balance);
     $('unconf').innerHTML = delta !== 0
       ? `${t('unconf')}: <b>${fmt(b.balance + delta)}</b> CRB ${delta>0?'(+':'('}${fmt(delta)} ${t('pend')})`
       : '';
-    const rows = (hist||[]).map(h => {
-      const out = h.from === keys.address;
-      const peer = out ? h.to : h.from;
-      return `<tr><td>${h.height}</td><td class="${out?'out':'in'}">${out?t('out'):t('in_')}</td>
-        <td class="mono" style="font-size:12px">${peer.slice(0,16)}…</td>
-        <td class="${out?'out':'in'}">${out?'−':'+'}${fmt(h.amount)}</td></tr>`;
-    }).join('');
-    $('history').innerHTML = (pr + rows) || `<tr><td colspan="4" class="muted">${t('empty_hist')}</td></tr>`;
+    renderHistory();
   } catch(e){ console.error(e); }
+}
+
+// renderHistory composes pending + the live top page + on-demand older pages,
+// de-duplicated by txid, with a "load more" control until every tx is shown.
+function renderHistory(){
+  const seen = new Set();
+  const confirmed = histRecent.concat(histExtra).filter(h => {
+    if (seen.has(h.txid)) return false; seen.add(h.txid); return true;
+  });
+  const rows = confirmed.map(h => {
+    const out = h.from === keys.address;
+    const peer = out ? h.to : h.from;
+    return `<tr><td>${h.height}</td><td class="${out?'out':'in'}">${out?t('out'):t('in_')}</td>
+      <td class="mono" style="font-size:12px">${(peer||'').slice(0,16)}…</td>
+      <td class="${out?'out':'in'}">${out?'−':'+'}${fmt(h.amount)}</td></tr>`;
+  }).join('');
+  const more = confirmed.length < histTotal;
+  const footer = (histTotal > 0)
+    ? `<tr><td colspan="4" style="text-align:center;padding-top:10px">
+        ${more ? `<button class="ghost" style="padding:6px 14px;font-size:13px" onclick="loadMoreHist()" ${histLoading?'disabled':''}>${t('loadmore')}</button>` : ''}
+        <span class="muted" style="font-size:12px;display:block;margin-top:5px">${t('showing')} ${confirmed.length} ${t('of')} ${histTotal}</span></td></tr>`
+    : '';
+  $('history').innerHTML = (histPendingRows + rows + footer) || `<tr><td colspan="4" class="muted">${t('empty_hist')}</td></tr>`;
+}
+
+async function loadMoreHist(){
+  if (histLoading || !keys) return;
+  histLoading = true; renderHistory();
+  try {
+    const offset = histRecent.length + histExtra.length;
+    const more = await api('/history?addr=' + keys.address + '&limit=' + HIST_PAGE + '&offset=' + offset);
+    const seen = new Set(histRecent.concat(histExtra).map(h => h.txid));
+    histExtra = histExtra.concat((more || []).filter(h => !seen.has(h.txid)));
+  } catch(e){ console.error(e); }
+  histLoading = false; renderHistory();
 }
 
 const toCrb = s => (s / UNIT).toFixed(8).replace(/0+$/, '').replace(/\.$/, '');

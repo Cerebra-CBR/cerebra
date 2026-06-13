@@ -549,6 +549,7 @@ func statsHandler(w http.ResponseWriter, r *http.Request) {
 			"shares":   st.Shares[m],
 			"owed":     st.Owed[m],
 			"paid":     st.Paid[m],
+			"earned":   st.Earned[m],
 			"hashrate": hashrateOf(recent[m]),
 		})
 	}
@@ -561,6 +562,14 @@ func statsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, p := range st.Paid {
 		totalPaid += p
+	}
+	// Include every miner the pool has ever credited (even fully paid out, owed 0)
+	// so the dashboard's "show all" can display the complete, auditable set.
+	for m := range st.Paid {
+		add(m)
+	}
+	for m := range st.Earned {
+		add(m)
 	}
 	out := map[string]any{
 		"pool_address":   poolAddr,

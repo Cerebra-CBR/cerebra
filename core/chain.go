@@ -1053,10 +1053,18 @@ type HistoryItem struct {
 	Fee     uint64 `json:"fee"`
 }
 
-func (c *Chain) History(addr string, limit int) []HistoryItem {
+// History returns up to `limit` transactions touching addr, newest-first,
+// skipping the first `offset` matches. offset enables stable "load more"
+// paging without re-sending earlier pages; the total count is AddrTotals().Txn.
+// The scan is over the in-RAM chain so even a deep offset is cheap.
+func (c *Chain) History(addr string, limit, offset int) []HistoryItem {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+	if offset < 0 {
+		offset = 0
+	}
 	var out []HistoryItem
+	skipped := 0
 	for i := len(c.blocks) - 1; i >= 0 && len(out) < limit; i-- {
 		b := c.blocks[i]
 		for _, t := range b.Txs {
@@ -1065,6 +1073,10 @@ func (c *Chain) History(addr string, limit int) []HistoryItem {
 				from, _ = t.FromAddr()
 			}
 			if from == addr || t.To == addr {
+				if skipped < offset {
+					skipped++
+					continue
+				}
 				out = append(out, HistoryItem{
 					TxID: t.ID(), Height: b.Height, Time: b.Time,
 					From: from, To: t.To, Amount: t.Amount, Fee: t.Fee,
@@ -1136,8 +1148,9 @@ type RichEntry struct {
 	Nonce   uint64 `json:"nonce"`
 }
 
-// RichList returns the top-n addresses by balance.
-func (c *Chain) RichList(n int) []RichEntry {
+// RichList returns up to `n` addresses by balance, descending, starting at
+// rank `offset` (0-based) so the explorer can page through every funded address.
+func (c *Chain) RichList(n, offset int) []RichEntry {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	list := make([]RichEntry, 0, len(c.state))
@@ -1153,10 +1166,31 @@ func (c *Chain) RichList(n int) []RichEntry {
 		}
 		return list[i].Address < list[j].Address
 	})
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= len(list) {
+		return []RichEntry{}
+	}
+	list = list[offset:]
 	if n > 0 && len(list) > n {
 		list = list[:n]
 	}
 	return list
+}
+
+// AddrCount returns the number of funded (non-zero) addresses - the total for
+// rich-list pagination.
+func (c *Chain) AddrCount() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	n := 0
+	for _, a := range c.state {
+		if a.Balance > 0 {
+			n++
+		}
+	}
+	return n
 }
 
 // BlockByHash returns a block by its id hash, or nil.

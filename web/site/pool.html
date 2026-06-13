@@ -62,6 +62,10 @@ tr.me{background:linear-gradient(135deg,rgba(167,139,250,.14),rgba(34,211,238,.0
 a{color:var(--acc)}
 .muted{color:var(--mut)}
 .empty{color:var(--mut);padding:14px 4px}
+.pager{display:flex;gap:8px;justify-content:center;align-items:center;margin-top:12px;flex-wrap:wrap}
+.pager button{background:var(--glass);border:1px solid var(--border);color:var(--txt);border-radius:9px;padding:6px 14px;cursor:pointer;font-family:inherit;font-size:14px}
+.pager button:disabled{opacity:.4;cursor:default}
+.lnk{color:var(--acc);cursor:pointer;font-size:13px}
 </style>
 </head>
 <body>
@@ -125,14 +129,16 @@ const I = { en:{}, ru:{
   foot:'Кошелёк пула: <span id="pooladdr" class="addr"></span> · обновление каждые 10с',
   k_pool_hr:"Хешрейт пула", k_net_hr:"Хешрейт сети", k_blocks:"Блоков найдено", k_miners:"Активных майнеров",
   k_fee:"Комиссия пула", k_paid:"Всего выплачено", k_owed:"К выплате", k_minpay:"Мин. выплата",
-  c_addr:"Адрес", c_hr:"Хешрейт", c_shares:"Шары (раунд)", c_owed:"К выплате", c_paid:"Выплачено",
-  none:"Пока нет активных майнеров - стань первым.", you_row:"это ты"
+  c_addr:"Адрес", c_hr:"Хешрейт", c_shares:"Шары (раунд)", c_earned:"Начислено", c_owed:"К выплате", c_paid:"Выплачено",
+  none:"Пока нет активных майнеров - стань первым.", you_row:"это ты",
+  m_showing:"показано", c_of:"из", c_page:"стр.", m_showall:"Показать всех (включая выплаченных)", m_active:"Только активные"
 }};
 const EN={
   k_pool_hr:"Pool hashrate", k_net_hr:"Network hashrate", k_blocks:"Blocks found", k_miners:"Active miners",
   k_fee:"Pool fee", k_paid:"Total paid", k_owed:"Owed", k_minpay:"Min payout",
-  c_addr:"Address", c_hr:"Hashrate", c_shares:"Shares (round)", c_owed:"Owed", c_paid:"Paid",
-  none:"No active miners yet - be the first.", you_row:"you"
+  c_addr:"Address", c_hr:"Hashrate", c_shares:"Shares (round)", c_earned:"Earned", c_owed:"Owed", c_paid:"Paid",
+  none:"No active miners yet - be the first.", you_row:"you",
+  m_showing:"showing", c_of:"of", c_page:"page", m_showall:"Show all (incl. paid out)", m_active:"Active only"
 };
 function detect(){const s=localStorage.getItem('lang');return (s==='ru'||s==='en')?s:((navigator.language||'en').toLowerCase().startsWith('ru')?'ru':'en');}
 let LANG=detect();
@@ -188,22 +194,41 @@ function renderStats(s){
   const a=$('addr'), av=a?a.value.trim():'';
   if($('cmd')) $('cmd').textContent='cereblix-miner -addr '+(/^crb1[0-9a-f]{40}$/.test(av)?av:'crb1YOURADDRESS')+' -node https://cereblix.com/pool/api';
 }
+// Miners arrive in one poolstats fetch, so paging is client-side (no extra load).
+// Default view hides idle sub-threshold/paid-out miners; "Show all" reveals every
+// miner the pool has ever credited, paged, so anyone can audit the full set.
+const MINERS_PER = 50;
+let minerPage = 0, showAllMiners = false;
+function minerList(s){
+  const all = Array.isArray(s.miners)?s.miners:[];
+  const list = showAllMiners ? all.slice() : all.filter(m=>(+m.hashrate||0)>0||(+m.owed||0)>=(+s.min_payout||0));
+  return list.sort((x,y)=>((+y.hashrate||0)-(+x.hashrate||0))||((+y.shares||0)-(+x.shares||0))||((+y.paid||0)-(+x.paid||0)));
+}
 function renderMiners(s){
   const a=$('addr'), me=(a?a.value.trim():'').toLowerCase();
-  // show only real participants: currently hashing OR with a PAYABLE pending
-  // balance (owed >= min_payout). Idle miners with only sub-threshold dust owed
-  // (or fully paid out) are historical clutter, so they're hidden.
-  const miners=(Array.isArray(s.miners)?s.miners:[]).filter(m=>(+m.hashrate||0)>0||(+m.owed||0)>=(+s.min_payout||0)).sort((x,y)=>((+y.hashrate||0)-(+x.hashrate||0))||((+y.shares||0)-(+x.shares||0)));
+  const miners=minerList(s);
   const mb=$('minerbox'); if(!mb) return;
-  if(!miners.length){ mb.innerHTML='<div class="empty">'+esc(t('none'))+'</div>'; return; }
-  const rows=miners.map(m=>{
+  const total=miners.length;
+  const toggle=`<div style="text-align:center;margin-top:10px"><a class="lnk" onclick="toggleAllMiners()">${showAllMiners?esc(t('m_active')):esc(t('m_showall'))}</a></div>`;
+  if(!total){ mb.innerHTML='<div class="empty">'+esc(t('none'))+'</div>'+toggle; return; }
+  const pages=Math.ceil(total/MINERS_PER);
+  if(minerPage>=pages) minerPage=pages-1;
+  if(minerPage<0) minerPage=0;
+  const start=minerPage*MINERS_PER, pageItems=miners.slice(start,start+MINERS_PER);
+  const rows=pageItems.map(m=>{
     const addr=String(m.address||''), mine=addr.toLowerCase()===me;
     return `<tr class="${mine?'me':''}"><td class="addr">${esc(shortAddr(addr))}${mine?' <span class="tag">'+esc(t('you_row'))+'</span>':''}</td>`
       +`<td class="num">${fmtHR(m.hashrate)}</td><td class="num">${(+m.shares||0).toFixed(0)}</td>`
-      +`<td class="num">${fmtCRB(m.owed)}</td><td class="num">${fmtCRB(m.paid)}</td></tr>`;
+      +`<td class="num">${fmtCRB(m.earned)}</td><td class="num">${fmtCRB(m.owed)}</td><td class="num">${fmtCRB(m.paid)}</td></tr>`;
   }).join('');
-  mb.innerHTML=`<table><thead><tr><th>${esc(t('c_addr'))}</th><th class="num">${esc(t('c_hr'))}</th><th class="num">${esc(t('c_shares'))}</th><th class="num">${esc(t('c_owed'))}</th><th class="num">${esc(t('c_paid'))}</th></tr></thead><tbody>${rows}</tbody></table>`;
+  const pager = pages>1 ? `<div class="pager">
+    <button onclick="minerPageNav(-1)" ${minerPage===0?'disabled':''}>‹</button>
+    <span class="muted" style="font-size:13px">${esc(t('m_showing'))} ${start+1}–${Math.min(start+MINERS_PER,total)} ${esc(t('c_of'))} ${total} · ${esc(t('c_page'))} ${minerPage+1}/${pages}</span>
+    <button onclick="minerPageNav(1)" ${minerPage>=pages-1?'disabled':''}>›</button></div>` : '';
+  mb.innerHTML=`<table><thead><tr><th>${esc(t('c_addr'))}</th><th class="num">${esc(t('c_hr'))}</th><th class="num">${esc(t('c_shares'))}</th><th class="num">${esc(t('c_earned'))}</th><th class="num">${esc(t('c_owed'))}</th><th class="num">${esc(t('c_paid'))}</th></tr></thead><tbody>${rows}</tbody></table>${pager}${toggle}`;
 }
+function minerPageNav(d){ minerPage+=d; render(); }
+function toggleAllMiners(){ showAllMiners=!showAllMiners; minerPage=0; render(); }
 function renderYou(s){
   const a=$('addr'), me=(a?a.value.trim():'').toLowerCase(), y=$('you'); if(!y) return;
   if(!/^crb1[0-9a-f]{40}$/.test(me)){ y.innerHTML=t('you_hint'); return; }

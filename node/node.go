@@ -720,7 +720,8 @@ func (n *Node) RPCHandler() http.Handler {
 		if limit <= 0 || limit > 200 {
 			limit = 50
 		}
-		writeJSON(w, n.Chain.History(addr, limit))
+		offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+		writeJSON(w, n.Chain.History(addr, limit, offset))
 	})
 
 	h("/api/blocks", func(w http.ResponseWriter, r *http.Request) {
@@ -728,12 +729,24 @@ func (n *Node) RPCHandler() http.Handler {
 		if last <= 0 || last > 100 {
 			last = 15
 		}
-		hgt := n.Chain.Height()
-		from := uint64(0)
-		if uint64(last) <= hgt {
-			from = hgt - uint64(last) + 1
+		// `before` pages backwards: return up to `last` blocks with height < before
+		// (newest-first). Omit it for the latest blocks. The total is status.height+1.
+		top := n.Chain.Height()
+		if bs := r.URL.Query().Get("before"); bs != "" {
+			bv, err := strconv.ParseUint(bs, 10, 64)
+			if err != nil || bv == 0 {
+				writeJSON(w, []map[string]any{})
+				return
+			}
+			if bv-1 < top {
+				top = bv - 1
+			}
 		}
-		blocks := n.Chain.Blocks(from, last)
+		from := uint64(0)
+		if uint64(last) <= top {
+			from = top - uint64(last) + 1
+		}
+		blocks := n.Chain.Blocks(from, int(top-from+1))
 		out := make([]map[string]any, 0, len(blocks))
 		for i := len(blocks) - 1; i >= 0; i-- {
 			b := blocks[i]
@@ -824,7 +837,8 @@ func (n *Node) RPCHandler() http.Handler {
 		if n2 <= 0 || n2 > 200 {
 			n2 = 25
 		}
-		writeJSON(w, n.Chain.RichList(n2))
+		offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+		writeJSON(w, n.Chain.RichList(n2, offset))
 	})
 
 	// /api/search?q= classifies a query and points the explorer at the right view.
